@@ -8,8 +8,12 @@ export function formatHeaderLabel(shownDays: dayjs.Dayjs[]) {
   return `${first.format('D. MMM')} – ${last.format('D. MMM')}`;
 }
 
-export function getShownDays(anchorDate: Date, mode: 'three' | 'day') {
+export function getShownDays(anchorDate: Date, count: number) {
   const a = dayjs(anchorDate).startOf('day');
-  if (mode === 'day') return [a];
-  return [a.subtract(1, 'day'), a, a.add(1, 'day')];
+  const c = Math.max(1, Math.min(7, count));
+
+  const left = Math.floor((c - 1) / 2);
+  const start = a.subtract(left, 'day');
+
+  return Array.from({ length: c }, (_, i) => start.add(i, 'day'));
 }

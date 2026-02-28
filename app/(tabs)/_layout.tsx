@@ -1,22 +1,23 @@
-import { Tabs } from 'expo-router';
 import React from 'react';
+import { Tabs } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 
 export default function TabLayout() {
   return (
     <Tabs
       screenOptions={{
-      headerShown: false, // 👈 DAS IST NEU
-      tabBarActiveTintColor: '#5B67F1',
-      tabBarStyle: {
-        height: 65,
-        paddingBottom: 8,
-      },
-      tabBarLabelStyle: {
-        fontSize: 12,
-        fontWeight: '600',
-      },
-    }}
+        headerShown: false,
+        tabBarActiveTintColor: '#5B67F1',
+        tabBarStyle: {
+          height: 70,
+          paddingBottom: 14,
+          paddingTop: 8,
+        },
+        tabBarLabelStyle: {
+          fontSize: 12,
+          fontWeight: '600',
+        },
+      }}
     >
       <Tabs.Screen
         name="kalender"

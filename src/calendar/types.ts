@@ -3,7 +3,8 @@ export type CalEvent = {
   title: string;
   start: Date;
   end: Date;
-  color: string; // pastel / theme
+  color: string;
+  location?: string;
 };
 
 export type ViewMode = 'three' | 'day';
