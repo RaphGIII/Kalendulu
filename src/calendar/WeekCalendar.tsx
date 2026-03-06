@@ -20,6 +20,7 @@ import EventModal from './EventModal';
 import { useEvents } from './useEvents';
 import MonthView from './MonthView';
 import { CalEvent } from './types';
+import { ACCENT_GOLD, THEME } from './colors';
 
 dayjs.locale('de');
 
@@ -39,7 +40,9 @@ const VIEW_OPTIONS: Array<{ key: string; label: string; kind: ViewKind; daysCoun
 export default function WeekCalendar() {
   const [anchorDate, setAnchorDate] = useState(new Date());
   const [view, setView] = useState<ViewKind>('days');
-  const [daysCount, setDaysCount] = useState(3);
+
+  // ✅ Standard = 4 Tage
+  const [daysCount, setDaysCount] = useState(4);
 
   const [modalVisible, setModalVisible] = useState(false);
   const [viewPickerOpen, setViewPickerOpen] = useState(false);
@@ -67,7 +70,7 @@ export default function WeekCalendar() {
   const goToday = () => {
     setAnchorDate(new Date());
     setView('days');
-    setDaysCount(3);
+    setDaysCount(4);
   };
 
   const goPrev = () => {
@@ -121,7 +124,7 @@ export default function WeekCalendar() {
     const day = shownDays[idx];
 
     if (view === 'days' && daysCount === 1 && day.isSame(dayjs(anchorDate), 'day')) {
-      setDaysCount(3);
+      setDaysCount(4);
       return;
     }
 
@@ -158,9 +161,7 @@ export default function WeekCalendar() {
     return { top, left, lineWidth };
   }, [view, now, todayIndex, dayColumnWidth]);
 
-  // ✅ Pinch richtig herum:
-  // scale > 1 => reinzoomen => weniger Tage
-  // scale < 1 => rauszoomen => mehr Tage => >7 => month
+  // ✅ Pinch: reinzoomen => weniger Tage, rauszoomen => mehr Tage => >7 => month
   const onPinchStateChange = (e: any) => {
     if (e.nativeEvent.state !== State.END) return;
 
@@ -199,7 +200,7 @@ export default function WeekCalendar() {
     }
 
     setView('days');
-    setDaysCount(opt.daysCount ?? 3);
+    setDaysCount(opt.daysCount ?? 4);
   };
 
   return (
@@ -254,14 +255,21 @@ export default function WeekCalendar() {
               onSelectDay={(d) => {
                 setAnchorDate(d);
                 setView('days');
-                setDaysCount(3);
+                setDaysCount(4);
               }}
             />
           ) : (
             <>
               {/* Header row */}
               <View style={[styles.headerRow, { paddingHorizontal: 16 }]}>
-                <View style={{ width: LEFT_GUTTER, alignItems: 'flex-start', justifyContent: 'flex-end', paddingBottom: 6 }}>
+                <View
+                  style={{
+                    width: LEFT_GUTTER,
+                    alignItems: 'flex-start',
+                    justifyContent: 'flex-end',
+                    paddingBottom: 6,
+                  }}
+                >
                   <Text style={styles.yearText}>{yearLabel}</Text>
                 </View>
 
@@ -303,25 +311,23 @@ export default function WeekCalendar() {
               </View>
 
               {/* Grid */}
-              <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 18 }}>
+              <ScrollView
+                style={{ flex: 1 }}
+                contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 18 }}
+                showsVerticalScrollIndicator={false}
+                decelerationRate="fast"
+                scrollEventThrottle={16}
+              >
                 <View style={[styles.grid, { width: contentWidth }]}>
                   {hours.map((h) => (
                     <View key={h} style={[styles.hourRow, { height: HOUR_HEIGHT }]}>
-                      {/* ✅ Links wieder nur "09:00" */}
                       <View style={{ width: LEFT_GUTTER, paddingRight: 10, paddingTop: GRID_LINE_OFFSET - 8 }}>
                         <Text style={styles.hourText}>{dayjs().hour(h).minute(0).format('HH:mm')}</Text>
                       </View>
 
                       <View style={{ flexDirection: 'row', flex: 1 }}>
                         {shownDays.map((_, idx) => (
-                          <View
-                            key={idx}
-                            style={[
-                              styles.dayCol,
-                              { width: dayColumnWidth },
-                              idx === todayIndex && styles.todayColBg,
-                            ]}
-                          />
+                          <View key={idx} style={[styles.dayCol, { width: dayColumnWidth }]} />
                         ))}
                       </View>
 
@@ -331,6 +337,32 @@ export default function WeekCalendar() {
 
                   {/* Overlay */}
                   <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
+                    {/* ✅ Today column glow (Apple-like, faux gradient) */}
+                    {todayIndex >= 0 && (
+                      <>
+                        <View
+                          pointerEvents="none"
+                          style={[
+                            styles.todayGlowOuter,
+                            {
+                              left: LEFT_GUTTER + todayIndex * dayColumnWidth - 14,
+                              width: dayColumnWidth + 28,
+                            },
+                          ]}
+                        />
+                        <View
+                          pointerEvents="none"
+                          style={[
+                            styles.todayGlowInner,
+                            {
+                              left: LEFT_GUTTER + todayIndex * dayColumnWidth,
+                              width: dayColumnWidth,
+                            },
+                          ]}
+                        />
+                      </>
+                    )}
+
                     {nowLine && (
                       <View
                         style={[
@@ -348,7 +380,6 @@ export default function WeekCalendar() {
                       const pos = eventLayout(ev);
                       if (!pos) return null;
 
-                      // ✅ Meta (Zeit/Ort) nur wenn Box groß genug ist
                       const showTime = pos.height >= 64 && pos.width >= 88;
                       const showLocation = pos.height >= 84 && pos.width >= 110;
 
@@ -359,14 +390,15 @@ export default function WeekCalendar() {
                             setEditingEvent(ev);
                             setModalVisible(true);
                           }}
-                          style={[
+                          style={({ pressed }) => [
                             styles.event,
                             {
                               left: pos.left,
                               top: pos.top + GRID_LINE_OFFSET,
                               height: pos.height,
                               width: pos.width,
-                              backgroundColor: ev.color,
+                              borderLeftColor: ev.color,
+                              transform: [{ scale: pressed ? 0.985 : 1 }],
                             },
                           ]}
                         >
@@ -421,111 +453,127 @@ export default function WeekCalendar() {
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: '#F7F8FC' },
+  safe: { flex: 1, backgroundColor: THEME.bg },
 
   topBar: {
+    backgroundColor: THEME.bgDark,
     paddingHorizontal: 16,
     paddingTop: 10,
-    paddingBottom: 10,
+    paddingBottom: 12,
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
   },
-  weekTitle: { fontSize: 20, fontWeight: '900', color: '#202124' },
+  weekTitle: { fontSize: 20, fontWeight: '900', color: THEME.text },
 
   viewPickerBtn: {
-    marginTop: 4,
+    marginTop: 6,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
     alignSelf: 'flex-start',
-    paddingVertical: 4,
-    paddingHorizontal: 8,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
     borderRadius: 999,
-    backgroundColor: 'rgba(255,255,255,0.75)',
+    backgroundColor: 'rgba(255,255,255,0.08)',
     borderWidth: 1,
-    borderColor: '#E8EAF2',
+    borderColor: THEME.border,
   },
-  subTitle: { fontSize: 12, fontWeight: '800', color: '#8A8F9C' },
-  caret: { fontSize: 12, fontWeight: '900', color: '#8A8F9C', marginTop: -1 },
+  subTitle: { fontSize: 12, fontWeight: '900', color: THEME.muted },
+  caret: { fontSize: 12, fontWeight: '900', color: THEME.muted, marginTop: -1 },
 
   iconBtn: {
     width: 34,
     height: 34,
     borderRadius: 999,
-    backgroundColor: 'white',
+    backgroundColor: 'rgba(255,255,255,0.08)',
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1,
-    borderColor: '#E8EAF2',
+    borderColor: THEME.border,
   },
-  iconBtnText: { fontSize: 20, fontWeight: '800', color: '#202124', marginTop: -2 },
+  iconBtnText: { fontSize: 20, fontWeight: '900', color: 'rgba(255,255,255,0.92)', marginTop: -2 },
 
   todayPill: {
     paddingHorizontal: 14,
     height: 34,
     borderRadius: 999,
-    backgroundColor: '#5B67F1',
+    backgroundColor: ACCENT_GOLD,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  todayText: { color: 'white', fontWeight: '900', letterSpacing: 0.4 },
+  todayText: { color: '#0B1636', fontWeight: '900', letterSpacing: 0.4 },
 
   pickerOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.25)',
+    backgroundColor: 'rgba(0,0,0,0.55)',
     justifyContent: 'center',
     padding: 16,
   },
   pickerCard: {
-    backgroundColor: 'white',
+    backgroundColor: '#0F2454',
     borderRadius: 18,
     padding: 14,
     borderWidth: 1,
-    borderColor: '#E8EAF2',
+    borderColor: THEME.border,
   },
-  pickerTitle: { fontSize: 14, fontWeight: '900', color: '#202124', marginBottom: 10 },
+  pickerTitle: { fontSize: 14, fontWeight: '900', color: THEME.text, marginBottom: 10 },
   pickerItem: { paddingVertical: 12, paddingHorizontal: 10, borderRadius: 12 },
-  pickerItemText: { fontSize: 14, fontWeight: '800', color: '#202124' },
+  pickerItemText: { fontSize: 14, fontWeight: '900', color: 'rgba(255,255,255,0.92)' },
 
   headerRow: { paddingBottom: 8, flexDirection: 'row', alignItems: 'flex-end' },
-  yearText: { fontSize: 12, fontWeight: '900', color: '#202124' },
+  yearText: { fontSize: 12, fontWeight: '900', color: THEME.muted },
 
-  dow: { fontSize: 11, fontWeight: '800', color: '#8A8F9C' },
-  dowToday: { color: '#5B67F1' },
-  dowActive: { color: '#202124' },
+  dow: { fontSize: 11, fontWeight: '900', color: THEME.muted },
+  dowToday: { color: ACCENT_GOLD },
+  dowActive: { color: 'rgba(255,255,255,0.95)' },
 
   dayChip: {
     marginTop: 6,
     width: 30,
     height: 30,
     borderRadius: 10,
-    backgroundColor: 'white',
+    backgroundColor: 'rgba(255,255,255,0.06)',
     borderWidth: 1,
-    borderColor: '#E8EAF2',
+    borderColor: THEME.border,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  dayChipToday: { backgroundColor: '#5B67F1', borderColor: '#5B67F1' },
-  dayChipActive: { backgroundColor: '#FFFFFF', borderColor: '#202124' },
+  dayChipToday: { backgroundColor: ACCENT_GOLD, borderColor: ACCENT_GOLD },
+  dayChipActive: { backgroundColor: 'rgba(255,255,255,0.08)', borderColor: 'rgba(255,255,255,0.40)' },
 
-  dayChipText: { fontWeight: '900', color: '#202124' },
-  dayChipTextOnDark: { color: 'white' },
+  dayChipText: { fontWeight: '900', color: 'rgba(255,255,255,0.92)' },
+  dayChipTextOnDark: { color: '#0B1636' },
 
   grid: { position: 'relative' },
 
   hourRow: { position: 'relative', flexDirection: 'row', alignItems: 'flex-start' },
-  hourText: { fontSize: 12, color: '#8A8F9C', fontWeight: '900' },
+  hourText: { fontSize: 10, color: 'rgba(255,255,255,0.55)', fontWeight: '900' },
 
-  dayCol: { borderLeftWidth: 1, borderLeftColor: '#EEF0F6' },
-  todayColBg: { backgroundColor: 'rgba(91,103,241,0.06)' },
+  dayCol: { borderLeftWidth: 1, borderLeftColor: THEME.grid },
 
   hourLine: {
     position: 'absolute',
     left: LEFT_GUTTER,
     right: 0,
     height: 1,
-    backgroundColor: '#EEF0F6',
+    backgroundColor: THEME.grid,
+  },
+
+  // Today glow layers
+  todayGlowOuter: {
+    position: 'absolute',
+    top: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(212,175,55,0.06)',
+    borderRadius: 18,
+  },
+  todayGlowInner: {
+    position: 'absolute',
+    top: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(212,175,55,0.10)',
+    borderRadius: 14,
   },
 
   nowLineWrap: {
@@ -536,26 +584,29 @@ const styles = StyleSheet.create({
     paddingLeft: 6,
     paddingRight: 6,
   },
-  nowDot: { width: 8, height: 8, borderRadius: 99, backgroundColor: '#FF3B30', marginRight: 6 },
-  nowLine: { height: 2, flex: 1, backgroundColor: '#FF3B30', borderRadius: 99 },
+  nowDot: { width: 8, height: 8, borderRadius: 99, backgroundColor: ACCENT_GOLD, marginRight: 6 },
+  nowLine: { height: 2, flex: 1, backgroundColor: ACCENT_GOLD, borderRadius: 99 },
 
+  // ✅ Premium floating cards
   event: {
     position: 'absolute',
     borderRadius: 12,
     paddingHorizontal: 12,
     paddingVertical: 10,
+    backgroundColor: THEME.cardDark,
     borderWidth: 1,
-    borderColor: 'rgba(0,0,0,0.06)',
-    shadowOpacity: 0.10,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 6 },
-
-    // ✅ verhindert “rausragen” komplett
+    borderColor: 'rgba(255,255,255,0.08)',
+    borderLeftWidth: 4,
+    shadowColor: '#000',
+    shadowOpacity: 0.28,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 10 },
+    elevation: 6,
     overflow: 'hidden',
   },
-  eventTitle: { fontWeight: '900', color: '#202124', fontSize: 13 },
-  eventTimeSmall: { fontSize: 11, color: '#404552', fontWeight: '800', lineHeight: 13 },
-  eventLocation: { marginTop: 4, fontSize: 11, color: '#606574', fontWeight: '700' },
+  eventTitle: { fontWeight: '900', color: THEME.text, fontSize: 13 },
+  eventTimeSmall: { fontSize: 11, color: 'rgba(255,255,255,0.78)', fontWeight: '900', lineHeight: 13 },
+  eventLocation: { marginTop: 4, fontSize: 11, color: 'rgba(255,255,255,0.62)', fontWeight: '800' },
 
   fab: {
     position: 'absolute',
@@ -564,12 +615,14 @@ const styles = StyleSheet.create({
     width: 56,
     height: 56,
     borderRadius: 18,
-    backgroundColor: '#5B67F1',
+    backgroundColor: ACCENT_GOLD,
     alignItems: 'center',
     justifyContent: 'center',
-    shadowOpacity: 0.18,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 6 },
+    shadowColor: '#000',
+    shadowOpacity: 0.30,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 10 },
+    elevation: 8,
   },
-  fabPlus: { color: 'white', fontSize: 28, fontWeight: '900', marginTop: -2 },
+  fabPlus: { color: '#0B1636', fontSize: 28, fontWeight: '900', marginTop: -2 },
 });

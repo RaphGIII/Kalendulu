@@ -12,7 +12,7 @@ import {
 import DateTimePicker from '@react-native-community/datetimepicker';
 import dayjs from 'dayjs';
 import { CalEvent } from './types';
-import { EVENT_COLORS } from './colors';
+import { EVENT_COLORS, THEME, ACCENT_GOLD } from './colors';
 
 type Props = {
   visible: boolean;
@@ -61,7 +61,6 @@ export default function EventModal({
 
   const [picker, setPicker] = useState<PickerKind>(null);
 
-  // ✅ Wenn edit-event gesetzt wird, Felder vorbefüllen
   useEffect(() => {
     if (!visible) return;
 
@@ -76,7 +75,6 @@ export default function EventModal({
       setStart(roundTo15Min(s.toDate()));
       setEnd(roundTo15Min(e.toDate()));
     } else {
-      // create defaults
       setTitle('');
       setLocation('');
       setColor(EVENT_COLORS[0]);
@@ -98,7 +96,6 @@ export default function EventModal({
     const t = title.trim();
     if (!t) return;
 
-    // combine date with times
     const day = dayjs(date);
     const s = dayjs(start);
     const e = dayjs(end);
@@ -132,15 +129,13 @@ export default function EventModal({
 
   return (
     <Modal visible={visible} animationType="fade" transparent>
-      <KeyboardAvoidingView
-        style={styles.overlay}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      >
+      <KeyboardAvoidingView style={styles.overlay} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <View style={styles.card}>
           <Text style={styles.title}>{isEdit ? 'Termin bearbeiten' : 'Neuer Termin'}</Text>
 
           <TextInput
             placeholder="Titel"
+            placeholderTextColor="rgba(255,255,255,0.45)"
             value={title}
             onChangeText={setTitle}
             style={styles.input}
@@ -149,6 +144,7 @@ export default function EventModal({
 
           <TextInput
             placeholder="Ort (optional)"
+            placeholderTextColor="rgba(255,255,255,0.45)"
             value={location}
             onChangeText={setLocation}
             style={styles.input}
@@ -175,11 +171,7 @@ export default function EventModal({
               <Pressable
                 key={c}
                 onPress={() => setColor(c)}
-                style={[
-                  styles.colorCircle,
-                  { backgroundColor: c },
-                  color === c && styles.colorSelected,
-                ]}
+                style={[styles.colorCircle, { backgroundColor: c }, color === c && styles.colorSelected]}
               />
             ))}
           </View>
@@ -193,18 +185,16 @@ export default function EventModal({
                 }}
                 style={styles.deleteBtn}
               >
-                <Text style={{ color: 'white', fontWeight: '900' }}>Löschen</Text>
+                <Text style={styles.deleteText}>Löschen</Text>
               </Pressable>
             ) : (
               <Pressable onPress={closeOnly} style={styles.cancelBtn}>
-                <Text style={{ fontWeight: '700' }}>Abbrechen</Text>
+                <Text style={styles.cancelText}>Abbrechen</Text>
               </Pressable>
             )}
 
-            <Pressable onPress={handleSubmit} style={styles.saveBtn}>
-              <Text style={{ color: 'white', fontWeight: '900' }}>
-                {isEdit ? 'Speichern' : 'Erstellen'}
-              </Text>
+            <Pressable onPress={handleSubmit} style={[styles.saveBtn, { backgroundColor: ACCENT_GOLD }]}>
+              <Text style={styles.saveText}>{isEdit ? 'Speichern' : 'Erstellen'}</Text>
             </Pressable>
           </View>
 
@@ -228,7 +218,7 @@ export default function EventModal({
 
               {Platform.OS === 'ios' && (
                 <Pressable onPress={() => setPicker(null)} style={styles.doneBtn}>
-                  <Text style={{ fontWeight: '900', color: 'white' }}>Fertig</Text>
+                  <Text style={styles.doneText}>Fertig</Text>
                 </Pressable>
               )}
             </View>
@@ -242,7 +232,7 @@ export default function EventModal({
 const styles = StyleSheet.create({
   overlay: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.32)',
+    backgroundColor: 'rgba(0,0,0,0.55)',
     justifyContent: 'center',
     alignItems: 'center',
     padding: 16,
@@ -250,63 +240,73 @@ const styles = StyleSheet.create({
   card: {
     width: '100%',
     maxWidth: 420,
-    backgroundColor: 'white',
+    backgroundColor: '#0F2454',
     borderRadius: 22,
     padding: 18,
+    borderWidth: 1,
+    borderColor: THEME.border,
   },
-  title: { fontSize: 18, fontWeight: '900', marginBottom: 12, color: '#202124' },
+  title: { fontSize: 18, fontWeight: '900', marginBottom: 12, color: THEME.text },
+
   input: {
     borderWidth: 1,
-    borderColor: '#E8EAF2',
-    borderRadius: 12,
+    borderColor: THEME.border,
+    borderRadius: 14,
     padding: 12,
     marginBottom: 10,
-    fontWeight: '700',
+    fontWeight: '800',
+    color: THEME.text,
+    backgroundColor: 'rgba(255,255,255,0.06)',
   },
+
   row: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 6, marginBottom: 12 },
   pill: {
-    backgroundColor: '#F7F8FC',
+    backgroundColor: 'rgba(255,255,255,0.06)',
     borderWidth: 1,
-    borderColor: '#E8EAF2',
+    borderColor: THEME.border,
     borderRadius: 999,
     paddingHorizontal: 12,
     paddingVertical: 10,
   },
-  pillText: { fontWeight: '800', color: '#202124' },
+  pillText: { fontWeight: '900', color: 'rgba(255,255,255,0.92)' },
 
-  label: { fontWeight: '900', marginBottom: 8, color: '#202124' },
+  label: { fontWeight: '900', marginBottom: 8, color: THEME.muted, letterSpacing: 0.9 },
   colorRow: { flexDirection: 'row', gap: 10, marginBottom: 14, flexWrap: 'wrap' },
   colorCircle: { width: 28, height: 28, borderRadius: 14 },
-  colorSelected: { borderWidth: 2, borderColor: '#202124' },
+  colorSelected: { borderWidth: 2, borderColor: 'rgba(255,255,255,0.9)' },
 
   buttonRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   cancelBtn: { paddingVertical: 10, paddingHorizontal: 8 },
+  cancelText: { fontWeight: '900', color: THEME.muted },
 
   deleteBtn: {
-    backgroundColor: '#FF3B30',
+    backgroundColor: 'rgba(255,59,48,0.92)',
     paddingHorizontal: 16,
     paddingVertical: 12,
     borderRadius: 12,
   },
+  deleteText: { color: 'white', fontWeight: '900' },
+
   saveBtn: {
-    backgroundColor: '#5B67F1',
     paddingHorizontal: 18,
     paddingVertical: 12,
     borderRadius: 12,
   },
+  saveText: { color: '#0B1636', fontWeight: '900' },
 
   pickerWrap: {
     marginTop: 14,
     borderTopWidth: 1,
-    borderTopColor: '#EEF0F6',
+    borderTopColor: THEME.border,
     paddingTop: 12,
   },
   doneBtn: {
     marginTop: 10,
     alignSelf: 'flex-end',
-    backgroundColor: '#5B67F1',
+    backgroundColor: ACCENT_GOLD,
     paddingHorizontal: 14,
     paddingVertical: 10,
     borderRadius: 12,
   },
+  doneText: { fontWeight: '900', color: '#0B1636' },
 });

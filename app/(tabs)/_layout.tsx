@@ -7,15 +7,32 @@ export default function TabLayout() {
     <Tabs
       screenOptions={{
         headerShown: false,
-        tabBarActiveTintColor: '#5B67F1',
+
+        // ✅ Gold als aktive Farbe
+        tabBarActiveTintColor: '#D4AF37',
+        // ✅ Weiß/hellgrau als inaktive Farbe (passt zum Darkmode)
+        tabBarInactiveTintColor: 'rgba(255,255,255,0.55)',
+
+        // ✅ Tabbar: dunkler als dein Navy + leichter Gold-Schimmer oben
         tabBarStyle: {
-          height: 70,
+          backgroundColor: '#0F2454',
+          borderTopWidth: 1,
+          borderTopColor: 'rgba(212,175,55,0.18)',
+          height: 74,
           paddingBottom: 14,
           paddingTop: 8,
+
+          // optional: premium shadow (iOS-like)
+          shadowColor: '#000',
+          shadowOpacity: 0.25,
+          shadowRadius: 12,
+          shadowOffset: { width: 0, height: -6 },
+          elevation: 12,
         },
+
         tabBarLabelStyle: {
           fontSize: 12,
-          fontWeight: '600',
+          fontWeight: '700',
         },
       }}
     >
@@ -23,9 +40,7 @@ export default function TabLayout() {
         name="kalender"
         options={{
           title: 'Kalender',
-          tabBarIcon: ({ color, size }) => (
-            <Ionicons name="calendar" size={size} color={color} />
-          ),
+          tabBarIcon: ({ color, size }) => <Ionicons name="calendar" size={size} color={color} />,
         }}
       />
 
@@ -43,19 +58,15 @@ export default function TabLayout() {
         name="psyche"
         options={{
           title: 'Psyche',
-          tabBarIcon: ({ color, size }) => (
-            <Ionicons name="heart" size={size} color={color} />
-          ),
+          tabBarIcon: ({ color, size }) => <Ionicons name="heart" size={size} color={color} />,
         }}
       />
 
       <Tabs.Screen
-        name="lernen"
+        name="habits"
         options={{
-          title: 'Lernen',
-          tabBarIcon: ({ color, size }) => (
-            <Ionicons name="school" size={size} color={color} />
-          ),
+          title: 'Habits',
+          tabBarIcon: ({ color, size }) => <Ionicons name="flame" size={size} color={color} />,
         }}
       />
     </Tabs>
