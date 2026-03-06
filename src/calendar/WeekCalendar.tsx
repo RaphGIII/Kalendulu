@@ -21,7 +21,8 @@ import { useEvents } from './useEvents';
 import MonthView from './MonthView';
 import { CalEvent } from './types';
 import { ACCENT_GOLD, THEME } from './colors';
-
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { STORAGE_KEYS } from '../shared/storageKeys';
 dayjs.locale('de');
 
 const GRID_LINE_OFFSET = 18;

@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useFocusEffect } from '@react-navigation/native';
 import dayjs from 'dayjs';
 import { Habit, HabitState } from './types';
 import { loadHabitsState, saveHabitsState } from './storage';
@@ -13,21 +14,25 @@ const DEFAULTS: Habit[] = [
   { id: uid(), title: 'Lesen', color: '#00C2C7', targetPerDay: 1, checkins: {} },
 ];
 
+const DEFAULT_STATE: HabitState = {
+  name: 'Raphael',
+  habits: DEFAULTS,
+};
+
 function isComplete(h: Habit, dateKey: string) {
   return (h.checkins[dateKey] ?? 0) >= h.targetPerDay;
 }
 
 function calcStreaks(h: Habit) {
-  // current streak: count backwards from today
   let cur = 0;
   let d = dayjs();
+
   while (isComplete(h, d.format('YYYY-MM-DD'))) {
     cur += 1;
     d = d.subtract(1, 'day');
   }
 
-  // best streak: scan all recorded dates (simple & robust)
-  const keys = Object.keys(h.checkins).sort(); // YYYY-MM-DD
+  const keys = Object.keys(h.checkins).sort();
   if (keys.length === 0) return { current: cur, best: cur };
 
   let best = 0;
@@ -37,6 +42,7 @@ function calcStreaks(h: Habit) {
   for (const k of keys) {
     const day = dayjs(k);
     const complete = isComplete(h, k);
+
     if (!complete) {
       run = 0;
       prev = day;
@@ -59,23 +65,34 @@ function calcStreaks(h: Habit) {
 }
 
 export function useHabits() {
-  const [state, setState] = useState<HabitState>({
-    name: 'Raphael',
-    habits: DEFAULTS,
-  });
-
+  const [state, setState] = useState<HabitState>(DEFAULT_STATE);
   const [hydrated, setHydrated] = useState(false);
 
-  // Load once
-  useEffect(() => {
-    (async () => {
+  const loadState = useCallback(async () => {
+    try {
       const saved = await loadHabitsState();
-      if (saved?.habits?.length) setState(saved);
+      if (saved?.habits) {
+        setState(saved);
+      } else {
+        setState(DEFAULT_STATE);
+      }
+    } catch (e) {
+      console.log('Failed to load habits state', e);
+    } finally {
       setHydrated(true);
-    })();
+    }
   }, []);
 
-  // Save on changes (after hydration)
+  useEffect(() => {
+    loadState();
+  }, [loadState]);
+
+  useFocusEffect(
+    useCallback(() => {
+      loadState();
+    }, [loadState])
+  );
+
   useEffect(() => {
     if (!hydrated) return;
     saveHabitsState(state);
@@ -88,20 +105,41 @@ export function useHabits() {
       ...s,
       habits: s.habits.map((h) => {
         if (h.id !== habitId) return h;
+
         const current = h.checkins[dateKey] ?? 0;
         const next = current >= h.targetPerDay ? 0 : current + 1;
-        return { ...h, checkins: { ...h.checkins, [dateKey]: next } };
+
+        return {
+          ...h,
+          checkins: {
+            ...h.checkins,
+            [dateKey]: next,
+          },
+        };
       }),
     }));
   };
 
   const addHabit = (title: string, color: string, targetPerDay: number) => {
-    const h: Habit = { id: uid(), title, color, targetPerDay, checkins: {} };
-    setState((s) => ({ ...s, habits: [h, ...s.habits] }));
+    const h: Habit = {
+      id: uid(),
+      title,
+      color,
+      targetPerDay,
+      checkins: {},
+    };
+
+    setState((s) => ({
+      ...s,
+      habits: [h, ...s.habits],
+    }));
   };
 
   const removeHabit = (habitId: string) => {
-    setState((s) => ({ ...s, habits: s.habits.filter((h) => h.id !== habitId) }));
+    setState((s) => ({
+      ...s,
+      habits: s.habits.filter((h) => h.id !== habitId),
+    }));
   };
 
   const renameHabit = (habitId: string, title: string) => {
@@ -125,17 +163,21 @@ export function useHabits() {
     }));
   };
 
-  // 7-Tage Trend (alle Habits)
   const last7 = useMemo(() => {
     const days = Array.from({ length: 7 }, (_, i) => dayjs().subtract(6 - i, 'day'));
+
     return days.map((d) => {
       const key = d.format('YYYY-MM-DD');
       const sum = state.habits.reduce((acc, h) => acc + (h.checkins[key] ?? 0), 0);
-      return { key, label: d.format('dd'), value: sum };
+
+      return {
+        key,
+        label: d.format('dd'),
+        value: sum,
+      };
     });
   }, [state.habits]);
 
-  // Monthly heatmap intensity: total checkins per day across all habits
   const monthHeatmap = useMemo(() => {
     const m = dayjs();
     const start = m.startOf('month');
@@ -146,13 +188,15 @@ export function useHabits() {
       const key = d.format('YYYY-MM-DD');
       out[key] = state.habits.reduce((acc, h) => acc + (h.checkins[key] ?? 0), 0);
     }
+
     return out;
   }, [state.habits]);
 
-  // Streaks per habit
   const streaksByHabitId = useMemo(() => {
     const map: Record<string, { current: number; best: number }> = {};
-    for (const h of state.habits) map[h.id] = calcStreaks(h);
+    for (const h of state.habits) {
+      map[h.id] = calcStreaks(h);
+    }
     return map;
   }, [state.habits]);
 
@@ -160,16 +204,15 @@ export function useHabits() {
     state,
     todayKey,
     hydrated,
-
     last7,
     monthHeatmap,
     streaksByHabitId,
-
     toggleCheckin,
     addHabit,
     removeHabit,
     renameHabit,
     recolorHabit,
     setTarget,
+    reload: loadState,
   };
 }

@@ -52,7 +52,9 @@ export type TodoLikeTask = {
   title: string;
   done: boolean;
   createdAt: number;
-  // optional future fields: difficulty, dueDate, etc.
+  categoryId?: string;
+  reminderEnabled?: boolean;
+  reminderId?: string | null;
 };
 
 export type HabitsStateLike = {
@@ -76,4 +78,75 @@ export type CalendarEventLike = {
   title: string;
   start: string | Date;
   end: string | Date;
+};
+export type GoalHorizon = 'week' | 'month' | 'year' | 'fiveYears';
+
+export type GoalCategory =
+  | 'skill'
+  | 'fitness'
+  | 'study'
+  | 'career'
+  | 'health'
+  | 'creative'
+  | 'personal'
+  | 'general';
+
+export type GoalDifficulty = 'easy' | 'medium' | 'hard';
+
+export type GoalSemanticMatch = {
+  normalizedText: string;
+  matchedConcepts: string[];
+  matchedAliases: string[];
+  confidence: number;
+};
+
+export type PsycheGoal = {
+  id: string;
+  title: string;
+  horizon: GoalHorizon;
+  category: GoalCategory;
+  difficulty: GoalDifficulty;
+  createdAt: number;
+  active: boolean;
+  semantic?: GoalSemanticMatch;
+};
+
+export type PsycheFreeSlot = {
+  start: string;
+  end: string;
+  minutes: number;
+};
+
+export type PsycheSuggestedTodo = {
+  id: string;
+  title: string;
+  priority: 'low' | 'medium' | 'high';
+  reason: string;
+  goalId: string;
+};
+
+export type PsycheSuggestedHabit = {
+  id: string;
+  title: string;
+  frequencyPerDay: number;
+  reason: string;
+  goalId: string;
+};
+
+export type PsycheSuggestedCalendarBlock = {
+  id: string;
+  title: string;
+  start: string;
+  end: string;
+  reason: string;
+  goalId: string;
+};
+
+export type PsycheGoalPlan = {
+  goal: PsycheGoal;
+  motivation: string;
+  summary: string;
+  todos: PsycheSuggestedTodo[];
+  habits: PsycheSuggestedHabit[];
+  calendarBlocks: PsycheSuggestedCalendarBlock[];
 };

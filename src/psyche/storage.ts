@@ -39,3 +39,25 @@ export async function savePsycheHistory(items: PsycheDailySnapshot[]) {
     // ignore
   }
 }
+import { PsycheGoal } from './types';
+
+const GOALS_KEY = 'kalendulu:psyche:goals:v1';
+
+export async function loadPsycheGoals(): Promise<PsycheGoal[]> {
+  try {
+    const raw = await AsyncStorage.getItem(GOALS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as PsycheGoal[];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+export async function savePsycheGoals(goals: PsycheGoal[]) {
+  try {
+    await AsyncStorage.setItem(GOALS_KEY, JSON.stringify(goals));
+  } catch {
+    // ignore
+  }
+}
