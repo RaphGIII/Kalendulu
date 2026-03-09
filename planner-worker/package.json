@@ -1,0 +1,17 @@
+{
+  "name": "kalendulu-planner-worker",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "wrangler dev src/index.ts --ip 0.0.0.0 --port 8787",
+    "deploy": "wrangler deploy"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20250303.0",
+    "typescript": "^5.8.2",
+    "wrangler": "^4.71.0"
+  },
+  "dependencies": {
+    "groq-sdk": "^0.37.0"
+  }
+}

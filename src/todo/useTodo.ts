@@ -94,9 +94,7 @@ export function useTodo() {
       ? state.tasks.filter((t) => t.categoryId === activeCategoryId)
       : state.tasks;
 
-    return [...base].sort(
-      (a, b) => Number(a.done) - Number(b.done) || b.createdAt - a.createdAt
-    );
+    return [...base].sort((a, b) => b.createdAt - a.createdAt);
   }, [state.tasks, activeCategoryId]);
 
   const addTask = (title: string, categoryId: string) => {
@@ -120,24 +118,13 @@ export function useTodo() {
     const task = state.tasks.find((t) => t.id === taskId);
     if (!task) return;
 
-    const nextDone = !task.done;
-
-    if (nextDone && task.reminderId) {
+    if (task.reminderId) {
       await cancelReminder(task.reminderId);
     }
 
     setState((s) => ({
       ...s,
-      tasks: s.tasks.map((t) =>
-        t.id === taskId
-          ? {
-              ...t,
-              done: nextDone,
-              reminderEnabled: nextDone ? false : t.reminderEnabled,
-              reminderId: nextDone ? null : t.reminderId,
-            }
-          : t
-      ),
+      tasks: s.tasks.filter((t) => t.id !== taskId),
     }));
   };
 

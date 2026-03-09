@@ -1,8 +1,9 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { PsycheDailySnapshot, PsycheSettings } from './types';
+import { PsycheDailySnapshot, PsycheGoal, PsycheSettings } from './types';
 
 const SETTINGS_KEY = 'kalendulu:psyche:settings:v1';
 const HISTORY_KEY = 'kalendulu:psyche:history:v1';
+const GOALS_KEY = 'kalendulu:psyche:goals:v1';
 
 export async function loadPsycheSettings(): Promise<PsycheSettings | null> {
   try {
@@ -39,16 +40,12 @@ export async function savePsycheHistory(items: PsycheDailySnapshot[]) {
     // ignore
   }
 }
-import { PsycheGoal } from './types';
-
-const GOALS_KEY = 'kalendulu:psyche:goals:v1';
 
 export async function loadPsycheGoals(): Promise<PsycheGoal[]> {
   try {
     const raw = await AsyncStorage.getItem(GOALS_KEY);
     if (!raw) return [];
-    const parsed = JSON.parse(raw) as PsycheGoal[];
-    return Array.isArray(parsed) ? parsed : [];
+    return JSON.parse(raw) as PsycheGoal[];
   } catch {
     return [];
   }

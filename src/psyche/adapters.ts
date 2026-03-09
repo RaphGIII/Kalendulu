@@ -2,9 +2,6 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   CalendarEventLike,
   HabitsStateLike,
-  PsycheSuggestedCalendarBlock,
-  PsycheSuggestedHabit,
-  PsycheSuggestedTodo,
   TodoLikeTask,
   TodoStateLike,
 } from './types';

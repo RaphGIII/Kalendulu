@@ -10,7 +10,7 @@ import {
   PsycheSuggestedTodo,
   TodoLikeTask,
 } from '../types';
-import { semanticMatchGoal } from './semanticMatcher';
+import { semanticMatchGoal } from './semanticMatcher.old';
 
 function uid(prefix: string) {
   return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;

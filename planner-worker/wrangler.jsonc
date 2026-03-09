@@ -1,0 +1,8 @@
+{
+  "name": "kalendulu-planner",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-03-06",
+  "ai": {
+    "binding": "AI"
+  }
+}

@@ -1,601 +1,952 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Alert, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import {
+  View,
+  Text,
+  StyleSheet,
+  Pressable,
+  ScrollView,
+  TextInput,
+  ActivityIndicator,
+  Alert,
+} from 'react-native';
 import dayjs from 'dayjs';
 import 'dayjs/locale/de';
 
+import { GOLD, PSYCHE_THEME } from './styles';
 import {
-  applyCalendarSuggestions,
-  applyFullGoalPlan,
-  applyHabitSuggestions,
-  applyTodoSuggestions,
+  loadPsycheGoals,
+  loadPsycheHistory,
+  savePsycheGoals,
+  savePsycheHistory,
+} from './storage';
+import {
   loadCalendarEventsBestEffort,
   loadHabitsState,
   loadTodoStateBestEffort,
 } from './adapters';
-import { PSYCHE_THEME, GOLD } from './styles';
-import {
-  loadPsycheHistory,
-  loadPsycheSettings,
-  savePsycheHistory,
-  savePsycheSettings,
-  loadPsycheGoals,
-  savePsycheGoals,
-} from './storage';
-
 import { computeSignals } from './engine/computeSignals';
 import { buildProfile } from './engine/buildProfile';
-import { generateReflection } from './engine/generateReflection';
-import { buildGoalPlan, createGoal } from './engine/goalPlanner';
+import { fetchGoalRefinement } from './refinementApi';
+import { fetchPlannerBundle } from './plannerApi';
+import { buildUserPlanningProfile } from './buildUserPlanningProfile';
+import { buildFreeSlots } from './buildFreeSlots';
 import {
-  GoalHorizon,
-  MotivationStyleId,
+  applyTodoSuggestion,
+  applyHabitSuggestion,
+  applyCalendarSuggestion,
+  applyRoutineSuggestion,
+} from './applySuggestion';
+
+import type {
+  GoalAnswerMap,
+  GoalQuestion,
+  GoalRefinementResponse,
+  PlannerBundle,
+  PlannerRoutine,
   PsycheDailySnapshot,
   PsycheGoal,
-  PsycheGoalPlan,
-  PsycheSettings,
-  TodoLikeTask,
-  CalendarEventLike,
 } from './types';
 
 dayjs.locale('de');
 
-const DEFAULT_SETTINGS: PsycheSettings = { style: 'winner', intensity: 2 };
-
-const STYLE_LABEL: Record<MotivationStyleId, string> = {
-  winner: 'Winner',
-  coach: 'Coach',
-  stoic: 'Stoic',
-  friend: 'Friend',
-};
-
-const HORIZON_LABEL: Record<GoalHorizon, string> = {
-  week: '1 Woche',
-  month: '1 Monat',
-  year: '1 Jahr',
-  fiveYears: '5 Jahre',
-};
-
-function formatHour(iso: string) {
-  return dayjs(iso).format('ddd HH:mm');
-}
+type Step = 'goal' | 'questions' | 'plan';
 
 export default function PsycheScreen() {
-  const [settings, setSettings] = useState<PsycheSettings>(DEFAULT_SETTINGS);
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const [history, setHistory] = useState<PsycheDailySnapshot[]>([]);
-  const [goals, setGoals] = useState<PsycheGoal[]>([]);
   const [loading, setLoading] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
 
-  const [goalTitle, setGoalTitle] = useState('');
-  const [goalHorizon, setGoalHorizon] = useState<GoalHorizon>('month');
+  const [goals, setGoals] = useState<PsycheGoal[]>([]);
+  const [goalInput, setGoalInput] = useState('');
+  const [history, setHistory] = useState<PsycheDailySnapshot[]>([]);
 
-  const [todoTasks, setTodoTasks] = useState<TodoLikeTask[]>([]);
-  const [calendarEvents, setCalendarEvents] = useState<CalendarEventLike[]>([]);
+  const [step, setStep] = useState<Step>('goal');
+  const [refinement, setRefinement] = useState<GoalRefinementResponse | null>(null);
+  const [answers, setAnswers] = useState<GoalAnswerMap>({});
+  const [planner, setPlanner] = useState<PlannerBundle | null>(null);
 
-  const todayKey = useMemo(() => dayjs().format('YYYY-MM-DD'), []);
-  const latest = useMemo(() => history[history.length - 1] ?? null, [history]);
-  const activeGoal = useMemo(() => goals.find((g) => g.active) ?? null, [goals]);
+  const [expandedReasonIds, setExpandedReasonIds] = useState<Record<string, boolean>>({});
 
-  const reflection = useMemo(() => {
-    if (!latest) return null;
-    return generateReflection({
-      style: settings.style,
-      intensity: settings.intensity,
-      profile: latest.profile,
-      signals: latest.signals,
-    });
-  }, [latest, settings]);
+  const latestGoal = useMemo(() => goals[goals.length - 1] ?? null, [goals]);
 
-  const currentPlan: PsycheGoalPlan | null = useMemo(() => {
-    if (!activeGoal) return null;
+  useEffect(() => {
+    (async () => {
+      try {
+        const [storedGoals, storedHistory] = await Promise.all([
+          loadPsycheGoals(),
+          loadPsycheHistory(),
+        ]);
 
-    const dayStart = dayjs().hour(7).minute(0).second(0).millisecond(0).toDate();
-    const dayEnd = dayjs().hour(22).minute(0).second(0).millisecond(0).toDate();
+        setGoals(storedGoals);
+        setHistory(storedHistory);
 
-    return buildGoalPlan({
-      goal: activeGoal,
-      tasks: todoTasks,
-      calendarEvents,
-      dayStart,
-      dayEnd,
-    });
-  }, [activeGoal, todoTasks, calendarEvents]);
+        let nextHistory = storedHistory;
 
-  async function reloadExternalData() {
-    const todo = await loadTodoStateBestEffort();
-    const cal = await loadCalendarEventsBestEffort();
-    
-    setTodoTasks(todo?.tasks ?? []);
-    setCalendarEvents(Array.isArray(cal) ? cal : []);
-  }
+        const hasToday = storedHistory.some(
+          (item) => item.dateKey === dayjs().format('YYYY-MM-DD')
+        );
 
-  async function refreshSnapshot() {
+        if (!hasToday) {
+          const habits = await loadHabitsState();
+          const todo = await loadTodoStateBestEffort();
+          const calendarEvents = await loadCalendarEventsBestEffort();
+
+          const histSignals = storedHistory.map((x) => x.signals);
+          const signals = computeSignals({
+            habits,
+            todo,
+            calendarEvents,
+            historySignals: histSignals,
+          });
+
+          const profile = buildProfile(signals);
+
+          const snap: PsycheDailySnapshot = {
+            dateKey: dayjs().format('YYYY-MM-DD'),
+            signals,
+            profile,
+          };
+
+          nextHistory = [...storedHistory, snap].slice(
+            Math.max(0, storedHistory.length + 1 - 30)
+          );
+
+          setHistory(nextHistory);
+          await savePsycheHistory(nextHistory);
+        }
+      } catch (error) {
+        console.error(error);
+        Alert.alert('Fehler', 'Der Psyche-Tab konnte nicht geladen werden.');
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, []);
+
+  async function refreshSnapshot(existingHistory?: PsycheDailySnapshot[]) {
+    const currentHistory = existingHistory ?? history;
+
     const habits = await loadHabitsState();
     const todo = await loadTodoStateBestEffort();
-    const cal = await loadCalendarEventsBestEffort();
-    const histSignals = history.map((h) => h.signals);
+    const calendarEvents = await loadCalendarEventsBestEffort();
 
+    const histSignals = currentHistory.map((h) => h.signals);
     const signals = computeSignals({
       habits,
       todo,
-      calendarEvents: cal,
+      calendarEvents,
       historySignals: histSignals,
     });
 
     const profile = buildProfile(signals);
+
     const snap: PsycheDailySnapshot = {
       dateKey: dayjs().format('YYYY-MM-DD'),
       signals,
       profile,
     };
 
-    const next = [...history];
+    const next = [...currentHistory];
     const idx = next.findIndex((x) => x.dateKey === snap.dateKey);
+
     if (idx >= 0) next[idx] = snap;
     else next.push(snap);
 
     const trimmed = next.slice(Math.max(0, next.length - 30));
+
     setHistory(trimmed);
     await savePsycheHistory(trimmed);
-    await reloadExternalData();
+
+    return snap;
   }
 
   async function addGoal() {
-    const title = goalTitle.trim();
+    const title = goalInput.trim();
     if (!title) return;
 
-    const newGoal = createGoal({
-      title,
-      horizon: goalHorizon,
-    });
+    try {
+      setSubmitting(true);
 
-    const next = goals.map((g) => ({ ...g, active: false })).concat(newGoal);
-    setGoals(next);
-    await savePsycheGoals(next);
-    setGoalTitle('');
-    await reloadExternalData();
+      const nextGoals: PsycheGoal[] = [...goals, { id: `${Date.now()}`, title }];
+      setGoals(nextGoals);
+      setGoalInput('');
+      await savePsycheGoals(nextGoals);
+
+      const habits = await loadHabitsState();
+      const todo = await loadTodoStateBestEffort();
+      const calendarEvents = await loadCalendarEventsBestEffort();
+
+      const userPlanningProfile = buildUserPlanningProfile({
+        goals: nextGoals,
+        todo,
+        habits,
+        calendarEvents,
+      });
+
+      const refine = await fetchGoalRefinement({
+        goal: title,
+        pastGoals: nextGoals,
+        profile: userPlanningProfile,
+      });
+
+      setRefinement(refine);
+      setAnswers({});
+      setPlanner(null);
+      setExpandedReasonIds({});
+      setStep('questions');
+    } catch (error) {
+      console.error(error);
+      Alert.alert('Fehler', 'Die Fragen konnten nicht erstellt werden.');
+    } finally {
+      setSubmitting(false);
+    }
   }
 
-  async function setActiveGoal(goalId: string) {
-    const next = goals.map((g) => ({
-      ...g,
-      active: g.id === goalId,
+  async function removeGoal(id: string) {
+    const nextGoals = goals.filter((goal) => goal.id !== id);
+    setGoals(nextGoals);
+    await savePsycheGoals(nextGoals);
+
+    if (nextGoals.length === 0) {
+      setPlanner(null);
+      setRefinement(null);
+      setAnswers({});
+      setExpandedReasonIds({});
+      setStep('goal');
+    }
+  }
+
+  function setAnswer(id: string, value: string | string[]) {
+    setAnswers((prev) => ({
+      ...prev,
+      [id]: value,
     }));
-    setGoals(next);
-    await savePsycheGoals(next);
   }
 
-  async function applyTodosFromPlan() {
-    if (!currentPlan) return;
+  function toggleMultiChoice(questionId: string, optionId: string) {
+    const existing = answers[questionId];
+    const current = Array.isArray(existing) ? existing : [];
+    const hasOption = current.includes(optionId);
 
-    const result = await applyTodoSuggestions(currentPlan.todos);
-    await reloadExternalData();
-    await refreshSnapshot();
-    Alert.alert('Todos übernommen', `${result.added} Vorschläge wurden hinzugefügt.`);
+    const next = hasOption
+      ? current.filter((x) => x !== optionId)
+      : [...current, optionId];
+
+    setAnswer(questionId, next);
   }
 
-  async function applyHabitsFromPlan() {
-    if (!currentPlan) return;
+  function isQuestionAnswered(question: GoalQuestion) {
+    const value = answers[question.id];
 
-    const result = await applyHabitSuggestions(currentPlan.habits);
-    await reloadExternalData();
-    await refreshSnapshot();
-    Alert.alert('Habits übernommen', `${result.added} Vorschläge wurden hinzugefügt.`);
+    if (question.type === 'text') {
+      return typeof value === 'string' && value.trim().length > 0;
+    }
+
+    if (question.type === 'single_choice') {
+      return typeof value === 'string' && value.trim().length > 0;
+    }
+
+    if (question.type === 'multi_choice') {
+      return Array.isArray(value) && value.length > 0;
+    }
+
+    return false;
   }
 
-  async function applyCalendarFromPlan() {
-    if (!currentPlan) return;
+  function validateRequiredQuestions() {
+    if (!refinement) return true;
 
-    const result = await applyCalendarSuggestions(currentPlan.calendarBlocks);
-    await reloadExternalData();
-    await refreshSnapshot();
-    Alert.alert('Kalender aktualisiert', `${result.added} Block-Vorschläge wurden eingeplant.`);
+    const missing = refinement.questions.filter(
+      (q) => q.required && !isQuestionAnswered(q)
+    );
+
+    if (missing.length > 0) {
+      Alert.alert(
+        'Noch unvollständig',
+        'Bitte beantworte zuerst alle Pflichtfragen.'
+      );
+      return false;
+    }
+
+    return true;
   }
 
-  async function applyAllFromPlan() {
-    if (!currentPlan) return;
+  async function generatePlan() {
+    if (!refinement) return;
+    if (!validateRequiredQuestions()) return;
 
-    const result = await applyFullGoalPlan({
-      todos: currentPlan.todos,
-      habits: currentPlan.habits,
-      calendarBlocks: currentPlan.calendarBlocks,
-    });
-    
-    await reloadExternalData();
-    await refreshSnapshot();
-    Alert.alert(
-      'Plan angewendet',
-      `Todos: ${result.todosAdded}\nHabits: ${result.habitsAdded}\nKalender: ${result.calendarAdded}`
+    try {
+      setSubmitting(true);
+
+      let latestSnap = history[history.length - 1] ?? null;
+      if (!latestSnap) {
+        latestSnap = await refreshSnapshot(history);
+      }
+
+      if (!latestSnap) {
+        throw new Error('No snapshot available');
+      }
+
+      const habits = await loadHabitsState();
+      const todo = await loadTodoStateBestEffort();
+      const calendarEvents = (await loadCalendarEventsBestEffort()) ?? [];
+      const freeSlots = buildFreeSlots(calendarEvents, {
+        startTomorrow: true,
+        daysAhead: 7,
+        minDurationMinutes: 20,
+      });
+
+      const userPlanningProfile = buildUserPlanningProfile({
+        goals,
+        todo,
+        habits,
+        calendarEvents,
+      });
+
+      const result = await fetchPlannerBundle({
+        goals,
+        profile: latestSnap.profile,
+        signals: latestSnap.signals,
+        freeSlots,
+        answers,
+        userPlanningProfile,
+      });
+
+      setPlanner(result);
+      setExpandedReasonIds({});
+      setStep('plan');
+    } catch (error) {
+      console.error(error);
+      Alert.alert('Fehler', 'Der Plan konnte nicht erstellt werden.');
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function handleApplyPrimary() {
+    if (!planner) return;
+
+    try {
+      setSubmitting(true);
+
+      await applyTodoSuggestion(planner.primary.todo.title);
+      await applyHabitSuggestion(planner.primary.habit.title);
+      await applyCalendarSuggestion(
+        planner.primary.calendar.title,
+        planner.primary.calendar.start,
+        planner.primary.calendar.end
+      );
+
+      for (const routine of planner.primary.routines) {
+        await applyRoutineSuggestion(routine);
+      }
+
+      Alert.alert('Übernommen', 'Plan und Routinen wurden hinzugefügt.');
+    } catch (error) {
+      console.error(error);
+      Alert.alert('Fehler', 'Der Plan konnte nicht übernommen werden.');
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function handleApplyAlternative(index: number) {
+    if (!planner) return;
+    const alt = planner.alternatives[index];
+    if (!alt) return;
+
+    try {
+      setSubmitting(true);
+
+      await applyTodoSuggestion(alt.todo.title);
+      await applyHabitSuggestion(alt.habit.title);
+      await applyCalendarSuggestion(
+        alt.calendar.title,
+        alt.calendar.start,
+        alt.calendar.end
+      );
+
+      Alert.alert('Übernommen', `Alternative "${alt.label}" wurde hinzugefügt.`);
+    } catch (error) {
+      console.error(error);
+      Alert.alert('Fehler', 'Die Alternative konnte nicht übernommen werden.');
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  function backToQuestions() {
+    setStep('questions');
+  }
+
+  function startNewGoal() {
+    setRefinement(null);
+    setAnswers({});
+    setPlanner(null);
+    setExpandedReasonIds({});
+    setStep('goal');
+  }
+
+  function toggleReason(id: string) {
+    setExpandedReasonIds((prev) => ({
+      ...prev,
+      [id]: !prev[id],
+    }));
+  }
+
+  function renderQuestion(question: GoalQuestion) {
+    const value = answers[question.id];
+
+    return (
+      <View key={question.id} style={styles.questionWrap}>
+        <View style={styles.questionHeader}>
+          <Text style={styles.questionTitle}>{question.title}</Text>
+          {question.required ? <Text style={styles.requiredMark}>Pflicht</Text> : null}
+        </View>
+
+        {question.type === 'text' ? (
+          <TextInput
+            value={typeof value === 'string' ? value : ''}
+            onChangeText={(v) => setAnswer(question.id, v)}
+            placeholder={question.placeholder ?? ''}
+            placeholderTextColor="rgba(255,255,255,0.38)"
+            style={styles.input}
+            multiline
+          />
+        ) : null}
+
+        {question.type === 'single_choice'
+          ? question.options?.map((option) => {
+              const selected = value === option.id;
+              return (
+                <Pressable
+                  key={option.id}
+                  onPress={() => setAnswer(question.id, option.id)}
+                  style={[styles.option, selected && styles.optionSelected]}
+                >
+                  <Text
+                    style={[
+                      styles.optionText,
+                      selected && styles.optionTextSelected,
+                    ]}
+                  >
+                    {option.label}
+                  </Text>
+                </Pressable>
+              );
+            })
+          : null}
+
+        {question.type === 'multi_choice'
+          ? question.options?.map((option) => {
+              const selected =
+                Array.isArray(value) && value.includes(option.id);
+
+              return (
+                <Pressable
+                  key={option.id}
+                  onPress={() => toggleMultiChoice(question.id, option.id)}
+                  style={[styles.option, selected && styles.optionSelected]}
+                >
+                  <Text
+                    style={[
+                      styles.optionText,
+                      selected && styles.optionTextSelected,
+                    ]}
+                  >
+                    {option.label}
+                  </Text>
+                </Pressable>
+              );
+            })
+          : null}
+      </View>
     );
   }
 
-  useEffect(() => {
-    (async () => {
-      const [s, h, g] = await Promise.all([
-        loadPsycheSettings(),
-        loadPsycheHistory(),
-        loadPsycheGoals(),
-      ]);
+  function renderReasonCard(
+    id: string,
+    title: string,
+    reason: string,
+    instruction?: string,
+    expectedEffect?: string,
+    extra?: React.ReactNode
+  ) {
+    const expanded = !!expandedReasonIds[id];
 
-      if (s) setSettings(s);
-      setHistory(h);
-      setGoals(g);
-      await reloadExternalData();
-      setLoading(false);
+    return (
+      <Pressable onPress={() => toggleReason(id)} style={styles.ideaCard}>
+        <Text style={styles.ideaTitle}>{title}</Text>
+        {extra}
+        <Text style={styles.tapHint}>
+          {expanded ? 'Erklärung ausblenden' : 'Warum wichtig?'}
+        </Text>
 
-      const hasToday = h.some((x) => x.dateKey === todayKey);
-      if (!hasToday) {
-        const habits = await loadHabitsState();
-        const todo = await loadTodoStateBestEffort();
-        const cal = await loadCalendarEventsBestEffort();
-        const histSignals = h.map((x) => x.signals);
-
-        const signals = computeSignals({
-          habits,
-          todo,
-          calendarEvents: cal,
-          historySignals: histSignals,
-        });
-
-        const profile = buildProfile(signals);
-        const snap: PsycheDailySnapshot = {
-          dateKey: todayKey,
-          signals,
-          profile,
-        };
-
-        const next = [...h, snap].slice(Math.max(0, h.length + 1 - 30));
-        setHistory(next);
-        await savePsycheHistory(next);
-      }
-    })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  useEffect(() => {
-    savePsycheSettings(settings);
-  }, [settings]);
-
-  return (
-    <>
-      <View style={styles.header}>
-        <View style={{ flex: 1 }}>
-          <Text style={styles.h1}>Psyche</Text>
-          <Text style={styles.sub}>
-            AI Reflection · {STYLE_LABEL[settings.style]} · Intensität {settings.intensity}
-          </Text>
-        </View>
-
-        <Pressable onPress={() => setSettingsOpen(true)} style={styles.iconBtn}>
-          <Text style={styles.iconBtnText}>⚙︎</Text>
-        </Pressable>
-      </View>
-
-      <ScrollView
-        style={{ flex: 1, backgroundColor: PSYCHE_THEME.bgDark }}
-        contentContainerStyle={{ padding: 16, gap: 14, paddingBottom: 40 }}
-      >
-        {loading || !latest ? (
-          <View style={styles.card}>
-            <Text style={styles.cardTitle}>Lade…</Text>
+        {expanded ? (
+          <View style={styles.explainerWrap}>
+            <Text style={styles.reasonText}>{reason}</Text>
+            {instruction ? (
+              <Text style={styles.instructionText}>Anweisung: {instruction}</Text>
+            ) : null}
+            {expectedEffect ? (
+              <Text style={styles.effectText}>Wirkung: {expectedEffect}</Text>
+            ) : null}
           </View>
-        ) : (
-          <>
-            <View style={styles.card}>
-              <Text style={styles.cardTitle}>Tagesimpuls</Text>
-              {reflection && (
-                <>
-                  <Text style={styles.body}>{reflection.title}</Text>
-                  <Text style={styles.body}>{reflection.body}</Text>
+        ) : null}
+      </Pressable>
+    );
+  }
 
-                  <Text style={[styles.microTitle, { marginTop: 14 }]}>NÄCHSTER SCHRITT</Text>
-                  <Text style={styles.micro}>{reflection.microAction}</Text>
+  function renderRoutine(routine: PlannerRoutine, index: number) {
+    const id = `routine-${index}`;
+    const expanded = !!expandedReasonIds[id];
 
-                  <View style={styles.tagRow}>
-                    {reflection.tags.slice(0, 4).map((t) => (
-                      <View key={t} style={styles.tag}>
-                        <Text style={styles.tagText}>{t}</Text>
-                      </View>
-                    ))}
-                  </View>
-                </>
-              )}
+    return (
+      <View key={`${routine.title}-${index}`} style={styles.card}>
+        <Pressable onPress={() => toggleReason(id)}>
+          <Text style={styles.cardTitle}>{routine.title}</Text>
+          <Text style={styles.routineMeta}>
+            {routine.frequencyPerWeek}x pro Woche
+          </Text>
+          <Text style={styles.tapHint}>
+            {expanded ? 'Erklärung ausblenden' : 'Warum diese Routine?'}
+          </Text>
+
+          {expanded ? (
+            <View style={styles.explainerWrap}>
+              <Text style={styles.reasonText}>{routine.reason}</Text>
+              {routine.instruction ? (
+                <Text style={styles.instructionText}>
+                  Anweisung: {routine.instruction}
+                </Text>
+              ) : null}
+              {routine.reviewAfterDays ? (
+                <Text style={styles.effectText}>
+                  Nach {routine.reviewAfterDays} Tagen Wirkung prüfen.
+                </Text>
+              ) : null}
             </View>
+          ) : null}
+        </Pressable>
 
-            <View style={styles.card}>
-              <Text style={styles.cardTitle}>Ziele</Text>
-
-              <TextInput
-                value={goalTitle}
-                onChangeText={setGoalTitle}
-                placeholder="z. B. Mondscheinsonate spielen können"
-                placeholderTextColor="rgba(255,255,255,0.35)"
-                style={styles.input}
-              />
-
-              <View style={styles.horizonRow}>
-                {(['week', 'month', 'year', 'fiveYears'] as GoalHorizon[]).map((h) => {
-                  const active = goalHorizon === h;
-                  return (
-                    <Pressable
-                      key={h}
-                      onPress={() => setGoalHorizon(h)}
-                      style={[
-                        styles.pill,
-                        active && { borderColor: GOLD, backgroundColor: 'rgba(212,175,55,0.12)' },
-                      ]}
-                    >
-                      <Text style={styles.pillText}>{HORIZON_LABEL[h]}</Text>
-                    </Pressable>
-                  );
-                })}
-              </View>
-
-              <Pressable onPress={addGoal} style={[styles.primaryBtn, { backgroundColor: GOLD, marginTop: 14 }]}>
-                <Text style={styles.primaryText}>Ziel hinzufügen</Text>
-              </Pressable>
-
-              <View style={{ gap: 10, marginTop: 14 }}>
-                {goals.map((goal) => {
-                  const isActive = goal.active;
-                  return (
-                    <Pressable
-                      key={goal.id}
-                      onPress={() => setActiveGoal(goal.id)}
-                      style={[
-                        styles.goalCard,
-                        isActive && { borderColor: GOLD, backgroundColor: 'rgba(212,175,55,0.08)' },
-                      ]}
-                    >
-                      <Text style={styles.goalTitle}>{goal.title}</Text>
-                      <Text style={styles.goalMeta}>
-                        {HORIZON_LABEL[goal.horizon]} · {goal.category} · {goal.difficulty}
-                      </Text>
-                    </Pressable>
-                  );
-                })}
-              </View>
-            </View>
-
-            {currentPlan && (
-              <View style={styles.card}>
-                <Text style={styles.cardTitle}>AI Goal Plan</Text>
-                <Text style={styles.body}>{currentPlan.motivation}</Text>
-                <Text style={[styles.hint, { marginTop: 8 }]}>{currentPlan.summary}</Text>
-
-                {currentPlan.todos.length > 0 && (
-                  <View style={{ marginTop: 16, gap: 10 }}>
-                    <Text style={styles.microTitle}>TODO VORSCHLÄGE</Text>
-                    {currentPlan.todos.map((item) => (
-                      <View key={item.id} style={styles.suggestionCard}>
-                        <Text style={styles.suggestionTitle}>{item.title}</Text>
-                        <Text style={styles.suggestionReason}>
-                          {item.priority.toUpperCase()} · {item.reason}
-                        </Text>
-                      </View>
-                    ))}
-                  </View>
-                )}
-
-                {currentPlan.habits.length > 0 && (
-                  <View style={{ marginTop: 16, gap: 10 }}>
-                    <Text style={styles.microTitle}>HABIT VORSCHLÄGE</Text>
-                    {currentPlan.habits.map((item) => (
-                      <View key={item.id} style={styles.suggestionCard}>
-                        <Text style={styles.suggestionTitle}>{item.title}</Text>
-                        <Text style={styles.suggestionReason}>
-                          {item.frequencyPerDay}x täglich · {item.reason}
-                        </Text>
-                      </View>
-                    ))}
-                  </View>
-                )}
-
-                {currentPlan.calendarBlocks.length > 0 && (
-                  <View style={{ marginTop: 16, gap: 10 }}>
-                    <Text style={styles.microTitle}>KALENDER VORSCHLÄGE</Text>
-                    {currentPlan.calendarBlocks.map((item) => (
-                      <View key={item.id} style={styles.suggestionCard}>
-                        <Text style={styles.suggestionTitle}>{item.title}</Text>
-                        <Text style={styles.suggestionReason}>
-                          {formatHour(item.start)} – {dayjs(item.end).format('HH:mm')}
-                        </Text>
-                        <Text style={styles.suggestionReason}>{item.reason}</Text>
-                      </View>
-                    ))}
-                  </View>
-                )}
-
-                <View style={{ marginTop: 18, gap: 10 }}>
-                  <Pressable
-                    onPress={applyAllFromPlan}
-                    style={[styles.primaryBtn, { backgroundColor: GOLD }]}
-                  >
-                    <Text style={styles.primaryText}>Alles übernehmen</Text>
-                  </Pressable>
-
-                  <View style={styles.applyGrid}>
-                    <Pressable onPress={applyTodosFromPlan} style={styles.applyBtn}>
-                      <Text style={styles.applyBtnText}>Als Todo</Text>
-                    </Pressable>
-
-                    <Pressable onPress={applyHabitsFromPlan} style={styles.applyBtn}>
-                      <Text style={styles.applyBtnText}>Als Habit</Text>
-                    </Pressable>
-
-                    <Pressable onPress={applyCalendarFromPlan} style={styles.applyBtn}>
-                      <Text style={styles.applyBtnText}>In Kalender</Text>
-                    </Pressable>
-                  </View>
-                </View>
-              </View>
-            )}
-
-            <View style={styles.card}>
-              <Text style={styles.cardTitle}>Mindset Profil</Text>
-              <View style={{ marginTop: 12, gap: 8 }}>
-                <StatRow label="Disziplin" value={latest.profile.discipline} />
-                <StatRow label="Konstanz" value={latest.profile.consistency} />
-                <StatRow label="Fokus" value={latest.profile.focus} />
-                <StatRow label="Planung" value={latest.profile.planning} />
-                <StatRow label="Recovery" value={latest.profile.recovery} />
-                <StatRow label="Momentum" value={latest.profile.momentum} />
-              </View>
-
-              <View style={{ flexDirection: 'row', gap: 10, marginTop: 16 }}>
-                <Pressable onPress={refreshSnapshot} style={[styles.primaryBtn, { backgroundColor: GOLD }]}>
-                  <Text style={styles.primaryText}>Neu analysieren</Text>
-                </Pressable>
-                <Pressable onPress={() => setSettingsOpen(true)} style={styles.secondaryBtn}>
-                  <Text style={styles.secondaryText}>Stil ändern</Text>
-                </Pressable>
-              </View>
-
-              <Text style={styles.hint}>
-                Habits werden sicher geladen. To-Do/Kalender werden aktuell best effort geladen.
+        <View style={styles.routineBlocksWrap}>
+          {routine.blocks.map((block, blockIndex) => (
+            <View key={`${block.title}-${blockIndex}`} style={styles.routineBlock}>
+              <Text style={styles.routineBlockTitle}>{block.title}</Text>
+              <Text style={styles.routineBlockTime}>
+                {dayjs(block.start).format('dd DD.MM. HH:mm')} –{' '}
+                {dayjs(block.end).format('HH:mm')}
               </Text>
             </View>
-          </>
-        )}
-      </ScrollView>
+          ))}
+        </View>
+      </View>
+    );
+  }
 
-      <Modal visible={settingsOpen} animationType="fade" transparent onRequestClose={() => setSettingsOpen(false)}>
-        <Pressable style={styles.overlay} onPress={() => setSettingsOpen(false)}>
-          <Pressable style={styles.modal} onPress={() => {}}>
-            <Text style={styles.modalTitle}>Motivation einstellen</Text>
+  return (
+    <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
+      <Text style={styles.title}>Psyche</Text>
 
-            <Text style={styles.modalLabel}>STIL</Text>
-            <View style={styles.horizonRow}>
-              {(['winner', 'coach', 'stoic', 'friend'] as MotivationStyleId[]).map((id) => {
-                const active = settings.style === id;
-                return (
-                  <Pressable
-                    key={id}
-                    onPress={() => setSettings((s) => ({ ...s, style: id }))}
-                    style={[
-                      styles.pill,
-                      active && { borderColor: GOLD, backgroundColor: 'rgba(212,175,55,0.12)' },
-                    ]}
-                  >
-                    <Text style={styles.pillText}>{STYLE_LABEL[id]}</Text>
-                  </Pressable>
-                );
-              })}
+      {loading ? (
+        <View style={styles.loaderWrap}>
+          <ActivityIndicator />
+        </View>
+      ) : null}
+
+      {!loading && step === 'goal' ? (
+        <>
+          <View style={styles.card}>
+            <Text style={styles.cardTitle}>Ziel</Text>
+
+            <View style={styles.inputRow}>
+              <TextInput
+                value={goalInput}
+                onChangeText={setGoalInput}
+                placeholder="Was möchtest du verändern?"
+                placeholderTextColor="rgba(255,255,255,0.38)"
+                style={styles.inputSingleLine}
+                onSubmitEditing={addGoal}
+                returnKeyType="done"
+              />
+              <Pressable
+                onPress={addGoal}
+                style={styles.addButton}
+                disabled={submitting}
+              >
+                <Text style={styles.addButtonText}>+</Text>
+              </Pressable>
+            </View>
+          </View>
+
+          {goals.length > 0 ? (
+            <View style={styles.card}>
+              <Text style={styles.cardTitle}>Bisherige Ziele</Text>
+              <View style={styles.goalList}>
+                {goals.map((goal) => (
+                  <View key={goal.id} style={styles.goalChip}>
+                    <Text style={styles.goalChipText}>{goal.title}</Text>
+                    <Pressable onPress={() => removeGoal(goal.id)} hitSlop={8}>
+                      <Text style={styles.goalChipRemove}>×</Text>
+                    </Pressable>
+                  </View>
+                ))}
+              </View>
+            </View>
+          ) : null}
+        </>
+      ) : null}
+
+      {!loading && step === 'questions' && refinement ? (
+        <View style={styles.card}>
+          <View style={styles.rowBetween}>
+            <View style={styles.headerFlex}>
+              <Text style={styles.cardTitle}>{refinement.goalLabel}</Text>
+              <Text style={styles.goalTypeBadge}>{refinement.goalType}</Text>
             </View>
 
-            <Text style={styles.modalLabel}>INTENSITÄT</Text>
-            <View style={styles.horizonRow}>
-              {[1, 2, 3].map((n) => {
-                const active = settings.intensity === n;
-                return (
-                  <Pressable
-                    key={n}
-                    onPress={() => setSettings((s) => ({ ...s, intensity: n as 1 | 2 | 3 }))}
-                    style={[
-                      styles.pill,
-                      active && { borderColor: GOLD, backgroundColor: 'rgba(212,175,55,0.12)' },
-                    ]}
-                  >
-                    <Text style={styles.pillText}>{n === 1 ? 'Soft' : n === 2 ? 'Normal' : 'Hard'}</Text>
-                  </Pressable>
-                );
-              })}
+            <Pressable onPress={startNewGoal} style={styles.secondaryButton}>
+              <Text style={styles.secondaryButtonText}>Neues Ziel</Text>
+            </Pressable>
+          </View>
+
+          <View style={styles.questionsBlock}>
+            {refinement.questions.map(renderQuestion)}
+          </View>
+
+          <Pressable
+            style={styles.generateButton}
+            onPress={generatePlan}
+            disabled={submitting}
+          >
+            <Text style={styles.generateButtonText}>
+              {submitting ? 'Wird erstellt ...' : 'Plan erstellen'}
+            </Text>
+          </Pressable>
+        </View>
+      ) : null}
+
+      {!loading && step === 'plan' && planner ? (
+        <>
+          <View style={styles.card}>
+            <View style={styles.rowBetween}>
+              <View style={styles.headerFlex}>
+                <Text style={styles.cardTitle}>{latestGoal?.title ?? 'Plan'}</Text>
+                {refinement?.goalType ? (
+                  <Text style={styles.goalTypeBadge}>{refinement.goalType}</Text>
+                ) : null}
+              </View>
+
+              <Pressable onPress={backToQuestions} style={styles.secondaryButton}>
+                <Text style={styles.secondaryButtonText}>Anpassen</Text>
+              </Pressable>
             </View>
+          </View>
+
+          <View style={styles.card}>
+            <Text style={styles.sectionTitle}>Hauptplan</Text>
+
+            {renderReasonCard(
+              'primary-todo',
+              `Todo: ${planner.primary.todo.title}`,
+              planner.primary.todo.reason,
+              planner.primary.todo.instruction,
+              planner.primary.todo.expectedEffect
+            )}
+
+            {renderReasonCard(
+              'primary-habit',
+              `Habit: ${planner.primary.habit.title}`,
+              planner.primary.habit.reason,
+              planner.primary.habit.instruction,
+              planner.primary.habit.expectedEffect
+            )}
+
+            {renderReasonCard(
+              'primary-calendar',
+              `Termin: ${planner.primary.calendar.title}`,
+              planner.primary.calendar.reason,
+              planner.primary.calendar.instruction,
+              undefined,
+              <Text style={styles.timeText}>
+                {dayjs(planner.primary.calendar.start).format('dd DD.MM. HH:mm')} –{' '}
+                {dayjs(planner.primary.calendar.end).format('HH:mm')}
+              </Text>
+            )}
+
+            {planner.primary.scheduleAdjustment
+              ? renderReasonCard(
+                  'primary-schedule-adjustment',
+                  `Zeitplan anpassen: ${planner.primary.scheduleAdjustment.title}`,
+                  planner.primary.scheduleAdjustment.reason,
+                  planner.primary.scheduleAdjustment.instruction,
+                  planner.primary.scheduleAdjustment.expectedEffect
+                )
+              : null}
+
+            {planner.primary.review ? (
+              <View style={styles.reviewCard}>
+                <Text style={styles.reviewTitle}>
+                  Wirkung nach {planner.primary.review.reviewAfterDays} Tagen prüfen
+                </Text>
+                {planner.primary.review.questions.map((q, i) => (
+                  <Text key={`${q}-${i}`} style={styles.reviewQuestion}>
+                    {i + 1}. {q}
+                  </Text>
+                ))}
+              </View>
+            ) : null}
 
             <Pressable
-              onPress={() => setSettingsOpen(false)}
-              style={[styles.primaryBtn, { backgroundColor: GOLD, marginTop: 16 }]}
+              onPress={handleApplyPrimary}
+              style={[styles.applyAllButton, submitting && styles.buttonDisabled]}
+              disabled={submitting}
             >
-              <Text style={styles.primaryText}>Fertig</Text>
+              <Text style={styles.applyAllButtonText}>
+                {submitting ? 'Wird übernommen ...' : 'Hauptplan übernehmen'}
+              </Text>
             </Pressable>
-          </Pressable>
-        </Pressable>
-      </Modal>
-    </>
-  );
-}
+          </View>
 
-function StatRow({ label, value }: { label: string; value: number }) {
-  return (
-    <View style={styles.statRow}>
-      <Text style={styles.statLabel}>{label}</Text>
-      <Text style={styles.statValue}>{value}</Text>
-    </View>
+          {planner.primary.routines.length > 0 ? (
+            <View style={styles.groupWrap}>
+              <Text style={styles.groupTitle}>Routinen</Text>
+              {planner.primary.routines.map(renderRoutine)}
+            </View>
+          ) : null}
+
+          {planner.alternatives.length > 0 ? (
+            <View style={styles.groupWrap}>
+              <Text style={styles.groupTitle}>Andere Richtungen</Text>
+
+              {planner.alternatives.map((alt, index) => (
+                <View key={`${alt.label}-${index}`} style={styles.card}>
+                  <Text style={styles.altLabel}>{alt.label}</Text>
+
+                  {renderReasonCard(
+                    `alt-${index}-todo`,
+                    `Todo: ${alt.todo.title}`,
+                    alt.todo.reason,
+                    alt.todo.instruction,
+                    alt.todo.expectedEffect
+                  )}
+
+                  {renderReasonCard(
+                    `alt-${index}-habit`,
+                    `Habit: ${alt.habit.title}`,
+                    alt.habit.reason,
+                    alt.habit.instruction,
+                    alt.habit.expectedEffect
+                  )}
+
+                  {renderReasonCard(
+                    `alt-${index}-calendar`,
+                    `Termin: ${alt.calendar.title}`,
+                    alt.calendar.reason,
+                    alt.calendar.instruction,
+                    undefined,
+                    <Text style={styles.timeText}>
+                      {dayjs(alt.calendar.start).format('dd DD.MM. HH:mm')} –{' '}
+                      {dayjs(alt.calendar.end).format('HH:mm')}
+                    </Text>
+                  )}
+
+                  <Pressable
+                    onPress={() => handleApplyAlternative(index)}
+                    style={[styles.secondaryWideButton, submitting && styles.buttonDisabled]}
+                    disabled={submitting}
+                  >
+                    <Text style={styles.secondaryWideButtonText}>
+                      Diese Richtung übernehmen
+                    </Text>
+                  </Pressable>
+                </View>
+              ))}
+            </View>
+          ) : null}
+
+          <Pressable
+            onPress={startNewGoal}
+            style={[styles.ghostButton, submitting && styles.buttonDisabled]}
+            disabled={submitting}
+          >
+            <Text style={styles.ghostButtonText}>Neues Ziel starten</Text>
+          </Pressable>
+        </>
+      ) : null}
+    </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
-  header: {
+  screen: {
+    flex: 1,
     backgroundColor: PSYCHE_THEME.bgDark,
-    paddingTop: 54,
+  },
+  content: {
+    paddingTop: 64,
     paddingHorizontal: 18,
-    paddingBottom: 18,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
+    paddingBottom: 32,
+    gap: 16,
   },
-  h1: {
+  title: {
     color: PSYCHE_THEME.text,
-    fontSize: 28,
+    fontSize: 30,
     fontWeight: '900',
-  },
-  sub: {
-    marginTop: 6,
-    color: PSYCHE_THEME.muted,
-    fontWeight: '900',
-  },
-  iconBtn: {
-    width: 42,
-    height: 42,
-    borderRadius: 999,
-    backgroundColor: 'rgba(255,255,255,0.10)',
-    borderWidth: 1,
-    borderColor: PSYCHE_THEME.border,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  iconBtnText: {
-    color: 'rgba(255,255,255,0.92)',
-    fontWeight: '900',
-    fontSize: 16,
-    marginTop: -1,
   },
   card: {
     backgroundColor: PSYCHE_THEME.cardDark,
-    borderRadius: 22,
-    padding: 14,
+    borderRadius: 24,
+    padding: 16,
     borderWidth: 1,
     borderColor: PSYCHE_THEME.border,
+  },
+  sectionTitle: {
+    color: PSYCHE_THEME.text,
+    fontSize: 20,
+    fontWeight: '900',
   },
   cardTitle: {
     color: PSYCHE_THEME.text,
-    fontWeight: '900',
-    fontSize: 16,
-  },
-  body: {
-    marginTop: 10,
-    color: 'rgba(255,255,255,0.88)',
-    fontWeight: '800',
-    lineHeight: 20,
-  },
-  microTitle: {
-    color: PSYCHE_THEME.muted,
-    fontWeight: '900',
-    letterSpacing: 1,
-    fontSize: 12,
-  },
-  micro: {
-    marginTop: 6,
-    color: 'rgba(255,255,255,0.92)',
+    fontSize: 18,
     fontWeight: '900',
   },
-  tagRow: {
+  rowBetween: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  headerFlex: {
+    flex: 1,
+    gap: 8,
+  },
+  inputRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 14,
+  },
+  inputSingleLine: {
+    flex: 1,
+    minHeight: 52,
+    borderRadius: 16,
+    paddingHorizontal: 14,
+    color: '#fff',
+    backgroundColor: 'rgba(255,255,255,0.07)',
+    borderWidth: 1,
+    borderColor: PSYCHE_THEME.border,
+    fontWeight: '700',
+  },
+  input: {
+    minHeight: 52,
+    borderRadius: 16,
+    paddingHorizontal: 14,
+    paddingTop: 14,
+    paddingBottom: 14,
+    color: '#fff',
+    backgroundColor: 'rgba(255,255,255,0.07)',
+    borderWidth: 1,
+    borderColor: PSYCHE_THEME.border,
+    fontWeight: '700',
+    marginTop: 8,
+  },
+  addButton: {
+    width: 52,
+    height: 52,
+    borderRadius: 16,
+    backgroundColor: GOLD,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  addButtonText: {
+    color: '#0B1636',
+    fontSize: 26,
+    fontWeight: '900',
+    marginTop: -2,
+  },
+  goalList: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 10,
-    marginTop: 12,
+    marginTop: 14,
   },
-  tag: {
+  goalChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    borderRadius: 999,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    borderWidth: 1,
+    borderColor: PSYCHE_THEME.border,
+  },
+  goalChipText: {
+    color: '#fff',
+    fontWeight: '800',
+  },
+  goalChipRemove: {
+    color: 'rgba(255,255,255,0.72)',
+    fontSize: 18,
+    fontWeight: '900',
+    lineHeight: 18,
+  },
+  questionsBlock: {
+    marginTop: 16,
+    gap: 14,
+  },
+  questionWrap: {
+    gap: 8,
+  },
+  questionHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: 10,
+    alignItems: 'center',
+  },
+  questionTitle: {
+    color: '#fff',
+    fontWeight: '800',
+    flex: 1,
+    lineHeight: 20,
+  },
+  requiredMark: {
+    color: GOLD,
+    fontSize: 12,
+    fontWeight: '900',
+  },
+  option: {
+    padding: 12,
+    borderRadius: 12,
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    borderWidth: 1,
+    borderColor: 'transparent',
+  },
+  optionSelected: {
+    borderColor: GOLD,
+    backgroundColor: 'rgba(212,175,55,0.18)',
+  },
+  optionText: {
+    color: '#fff',
+    fontWeight: '700',
+  },
+  optionTextSelected: {
+    color: '#fff',
+    fontWeight: '900',
+  },
+  generateButton: {
+    marginTop: 22,
+    minHeight: 52,
+    borderRadius: 16,
+    backgroundColor: GOLD,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  generateButtonText: {
+    color: '#0B1636',
+    fontWeight: '900',
+    fontSize: 15,
+  },
+  secondaryButton: {
     paddingHorizontal: 12,
     paddingVertical: 8,
     borderRadius: 999,
@@ -603,167 +954,172 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: PSYCHE_THEME.border,
   },
-  tagText: {
-    color: 'rgba(255,255,255,0.85)',
-    fontWeight: '900',
+  secondaryButtonText: {
+    color: '#fff',
+    fontWeight: '800',
     fontSize: 12,
   },
-  primaryBtn: {
-    flex: 1,
-    paddingVertical: 12,
-    borderRadius: 14,
-    alignItems: 'center',
-  },
-  primaryText: {
-    color: '#0B1636',
-    fontWeight: '900',
-    letterSpacing: 0.8,
-  },
-  secondaryBtn: {
-    flex: 1,
-    paddingVertical: 12,
-    borderRadius: 14,
-    alignItems: 'center',
+  secondaryWideButton: {
+    marginTop: 12,
+    minHeight: 48,
+    borderRadius: 16,
     backgroundColor: 'rgba(255,255,255,0.08)',
     borderWidth: 1,
     borderColor: PSYCHE_THEME.border,
-  },
-  secondaryText: {
-    color: 'rgba(255,255,255,0.92)',
-    fontWeight: '900',
-  },
-  hint: {
-    marginTop: 10,
-    color: 'rgba(255,255,255,0.55)',
-    fontWeight: '800',
-    fontSize: 12,
-    lineHeight: 18,
-  },
-  overlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.55)',
+    alignItems: 'center',
     justifyContent: 'center',
-    padding: 16,
   },
-  modal: {
-    backgroundColor: '#0F2454',
-    borderRadius: 22,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: PSYCHE_THEME.border,
-  },
-  modalTitle: {
-    color: PSYCHE_THEME.text,
+  secondaryWideButtonText: {
+    color: '#fff',
     fontWeight: '900',
-    fontSize: 16,
   },
-  modalLabel: {
-    marginTop: 12,
-    color: PSYCHE_THEME.muted,
-    fontWeight: '900',
-    letterSpacing: 1,
-    fontSize: 12,
+  ghostButton: {
+    minHeight: 48,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  pill: {
-    paddingHorizontal: 14,
-    paddingVertical: 10,
+  ghostButtonText: {
+    color: 'rgba(255,255,255,0.72)',
+    fontWeight: '800',
+  },
+  goalTypeBadge: {
+    alignSelf: 'flex-start',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
     borderRadius: 999,
-    borderWidth: 1,
-    borderColor: PSYCHE_THEME.border,
-    backgroundColor: 'rgba(255,255,255,0.06)',
+    backgroundColor: 'rgba(212,175,55,0.18)',
+    color: GOLD,
+    fontSize: 12,
+    fontWeight: '900',
+    textTransform: 'uppercase',
+    overflow: 'hidden',
   },
-  pillText: {
-    color: 'rgba(255,255,255,0.92)',
+  groupWrap: {
+    gap: 12,
+  },
+  groupTitle: {
+    color: PSYCHE_THEME.text,
+    fontSize: 18,
     fontWeight: '900',
   },
-  horizonRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 10,
-    marginTop: 12,
+  altLabel: {
+    color: GOLD,
+    fontSize: 13,
+    fontWeight: '900',
+    textTransform: 'uppercase',
+    letterSpacing: 0.7,
+    marginBottom: 12,
   },
-  input: {
+  ideaCard: {
     marginTop: 12,
+    padding: 14,
+    borderRadius: 18,
+    backgroundColor: 'rgba(255,255,255,0.06)',
     borderWidth: 1,
     borderColor: PSYCHE_THEME.border,
-    borderRadius: 14,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    color: 'white',
-    backgroundColor: 'rgba(255,255,255,0.05)',
+  },
+  ideaTitle: {
+    color: '#fff',
+    fontSize: 16,
+    lineHeight: 22,
+    fontWeight: '900',
+  },
+  timeText: {
+    marginTop: 8,
+    color: 'rgba(255,255,255,0.72)',
+    fontSize: 13,
     fontWeight: '700',
   },
-  goalCard: {
-    borderWidth: 1,
-    borderColor: PSYCHE_THEME.border,
-    borderRadius: 16,
-    padding: 12,
-    backgroundColor: 'rgba(255,255,255,0.04)',
-  },
-  goalTitle: {
-    color: 'white',
-    fontWeight: '900',
-    fontSize: 14,
-  },
-  goalMeta: {
-    marginTop: 6,
-    color: 'rgba(255,255,255,0.62)',
-    fontWeight: '800',
+  tapHint: {
+    marginTop: 8,
+    color: GOLD,
     fontSize: 12,
+    fontWeight: '900',
   },
-  suggestionCard: {
+  explainerWrap: {
+    marginTop: 8,
+    gap: 8,
+  },
+  reasonText: {
+    color: '#fff',
+    lineHeight: 21,
+    fontWeight: '700',
+  },
+  instructionText: {
+    color: 'rgba(255,255,255,0.82)',
+    lineHeight: 20,
+    fontWeight: '700',
+  },
+  effectText: {
+    color: GOLD,
+    lineHeight: 20,
+    fontWeight: '800',
+  },
+  routineMeta: {
+    marginTop: 8,
+    color: GOLD,
+    fontSize: 13,
+    fontWeight: '900',
+  },
+  routineBlocksWrap: {
+    marginTop: 14,
+    gap: 10,
+  },
+  routineBlock: {
+    padding: 12,
+    borderRadius: 14,
+    backgroundColor: 'rgba(255,255,255,0.06)',
     borderWidth: 1,
     borderColor: PSYCHE_THEME.border,
-    borderRadius: 14,
-    padding: 12,
-    backgroundColor: 'rgba(255,255,255,0.05)',
   },
-  suggestionTitle: {
-    color: 'white',
-    fontWeight: '900',
-    fontSize: 14,
+  routineBlockTitle: {
+    color: '#fff',
+    fontWeight: '800',
   },
-  suggestionReason: {
+  routineBlockTime: {
     marginTop: 6,
     color: 'rgba(255,255,255,0.68)',
     fontWeight: '700',
-    fontSize: 12,
-    lineHeight: 18,
   },
-  applyGrid: {
-    flexDirection: 'row',
-    gap: 10,
-    flexWrap: 'wrap',
-  },
-  applyBtn: {
-    flex: 1,
-    minWidth: 100,
-    paddingVertical: 12,
-    paddingHorizontal: 12,
-    borderRadius: 14,
-    alignItems: 'center',
-    backgroundColor: 'rgba(255,255,255,0.08)',
+  reviewCard: {
+    marginTop: 14,
+    padding: 14,
+    borderRadius: 18,
+    backgroundColor: 'rgba(255,255,255,0.06)',
     borderWidth: 1,
     borderColor: PSYCHE_THEME.border,
   },
-  applyBtnText: {
-    color: 'rgba(255,255,255,0.92)',
+  reviewTitle: {
+    color: GOLD,
     fontWeight: '900',
-    fontSize: 13,
+    marginBottom: 8,
   },
-  statRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    paddingVertical: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255,255,255,0.06)',
+  reviewQuestion: {
+    color: '#fff',
+    lineHeight: 21,
+    fontWeight: '700',
+    marginTop: 4,
   },
-  statLabel: {
-    color: 'rgba(255,255,255,0.75)',
-    fontWeight: '800',
+  applyAllButton: {
+    marginTop: 16,
+    minHeight: 54,
+    borderRadius: 18,
+    backgroundColor: GOLD,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  statValue: {
-    color: 'white',
+  applyAllButtonText: {
+    color: '#0B1636',
+    fontSize: 15,
     fontWeight: '900',
+  },
+  buttonDisabled: {
+    opacity: 0.6,
+  },
+  loaderWrap: {
+    paddingVertical: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 });

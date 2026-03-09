@@ -21,3 +21,4 @@ export type TodoState = {
   categories: Category[];
   tasks: Task[];
 };
+
