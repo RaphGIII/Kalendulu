@@ -42,7 +42,7 @@ app-example
 /ios
 /android
 
-#secrets
+# secrets
 .dev.vars
 .env
 .env.local
