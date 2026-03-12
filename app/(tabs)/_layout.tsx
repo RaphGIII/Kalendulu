@@ -7,13 +7,8 @@ export default function TabLayout() {
     <Tabs
       screenOptions={{
         headerShown: false,
-
-        // ✅ Gold als aktive Farbe
         tabBarActiveTintColor: '#D4AF37',
-        // ✅ Weiß/hellgrau als inaktive Farbe (passt zum Darkmode)
         tabBarInactiveTintColor: 'rgba(255,255,255,0.55)',
-
-        // ✅ Tabbar: dunkler als dein Navy + leichter Gold-Schimmer oben
         tabBarStyle: {
           backgroundColor: '#0F2454',
           borderTopWidth: 1,
@@ -21,15 +16,12 @@ export default function TabLayout() {
           height: 74,
           paddingBottom: 14,
           paddingTop: 8,
-
-          // optional: premium shadow (iOS-like)
           shadowColor: '#000',
           shadowOpacity: 0.25,
           shadowRadius: 12,
           shadowOffset: { width: 0, height: -6 },
           elevation: 12,
         },
-
         tabBarLabelStyle: {
           fontSize: 12,
           fontWeight: '700',
@@ -40,7 +32,9 @@ export default function TabLayout() {
         name="kalender"
         options={{
           title: 'Kalender',
-          tabBarIcon: ({ color, size }) => <Ionicons name="calendar" size={size} color={color} />,
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name="calendar" size={size} color={color} />
+          ),
         }}
       />
 
@@ -58,7 +52,19 @@ export default function TabLayout() {
         name="psyche"
         options={{
           title: 'Psyche',
-          tabBarIcon: ({ color, size }) => <Ionicons name="heart" size={size} color={color} />,
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name="heart" size={size} color={color} />
+          ),
+        }}
+      />
+
+      <Tabs.Screen
+        name="progress"
+        options={{
+          title: 'Fortschritt',
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name="bar-chart" size={size} color={color} />
+          ),
         }}
       />
 
@@ -66,7 +72,9 @@ export default function TabLayout() {
         name="habits"
         options={{
           title: 'Habits',
-          tabBarIcon: ({ color, size }) => <Ionicons name="flame" size={size} color={color} />,
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name="flame" size={size} color={color} />
+          ),
         }}
       />
     </Tabs>

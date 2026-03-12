@@ -1,6 +1,161 @@
-export type PsycheGoal = {
+export type PsycheSettings = {
+  reflectionTone?: 'gentle' | 'balanced' | 'intense';
+  motivationStyle?: 'calm' | 'direct' | 'aggressive' | 'strategic';
+};
+
+export type GoalCategory =
+  | 'music'
+  | 'fitness'
+  | 'study'
+  | 'language'
+  | 'career'
+  | 'business'
+  | 'mindset'
+  | 'health'
+  | 'creative'
+  | 'other';
+
+export type GoalDifficulty =
+  | 'very_easy'
+  | 'easy'
+  | 'medium'
+  | 'hard'
+  | 'very_hard';
+
+export type GoalStatus = 'draft' | 'active' | 'paused' | 'completed' | 'archived';
+
+export type GoalMilestoneStatus = 'locked' | 'active' | 'done';
+
+export type GoalMetricKind =
+  | 'skill'
+  | 'consistency'
+  | 'output'
+  | 'knowledge'
+  | 'confidence'
+  | 'performance'
+  | 'custom';
+
+export type GoalQuestionType =
+  | 'text'
+  | 'number'
+  | 'single_choice'
+  | 'multi_choice'
+  | 'scale'
+  | 'date';
+
+export type QuestionOption = {
+  id: string;
+  label: string;
+};
+
+export type GoalQuestion = {
   id: string;
   title: string;
+  type: GoalQuestionType;
+  required: boolean;
+  options?: QuestionOption[];
+  placeholder?: string;
+  min?: number;
+  max?: number;
+  step?: number;
+  helpText?: string;
+  section?: string;
+};
+
+export type GoalAnswerValue = string | number | string[];
+export type GoalAnswerMap = Record<string, GoalAnswerValue>;
+
+export type GoalMetric = {
+  id: string;
+  label: string;
+  kind: GoalMetricKind;
+  current: number;
+  target: number;
+  weight: number;
+  unit?: string;
+};
+
+export type GoalMilestone = {
+  id: string;
+  title: string;
+  description?: string;
+  targetPercent: number;
+  status: GoalMilestoneStatus;
+};
+
+export type GoalConstraintProfile = {
+  availableDaysPerWeek: number;
+  minutesPerDay: number;
+  preferredTime: 'morning' | 'afternoon' | 'evening' | 'mixed';
+  intensity: 1 | 2 | 3 | 4 | 5;
+  learningSpeed: 'slow' | 'normal' | 'fast';
+  stressTolerance: 'low' | 'medium' | 'high';
+};
+
+export type GoalDiagnostic = {
+  currentLevelLabel: string;
+  targetLevelLabel: string;
+  strengths: string[];
+  blockers: string[];
+  risks: string[];
+  realismScore: number;
+  confidenceScore: number;
+  estimatedDifficulty: GoalDifficulty;
+  whyThisGoalMatters?: string;
+};
+
+export type GoalPlanRequirements = {
+  requiredHabitsPerWeek: number;
+  requiredTodosPerWeek: number;
+  requiredFocusBlocksPerWeek: number;
+  requiredMinutesPerWeek: number;
+  estimatedWeeksNeeded: number;
+  onTrackThreshold: number;
+};
+
+export type GoalPlanRecommendation = {
+  summary: string;
+  todayFocus: string;
+  nextStep: string;
+  warning?: string;
+  suggestedDeadlineShiftDays?: number;
+};
+
+export type GoalProgressBreakdown = {
+  complianceScore: number;
+  executionScore: number;
+  selfReportScore: number;
+  metricScore: number;
+  total: number;
+  trend: 'up' | 'steady' | 'down';
+  onTrack: boolean;
+  level: number;
+};
+
+export type GoalHabitPlan = {
+  id: string;
+  title: string;
+  reason: string;
+  frequencyPerWeek: number;
+  durationMinutes: number;
+  difficulty: 'light' | 'medium' | 'deep';
+};
+
+export type GoalTodoPlan = {
+  id: string;
+  title: string;
+  reason: string;
+  priority: 'low' | 'medium' | 'high';
+  estimatedMinutes?: number;
+};
+
+export type GoalCalendarBlockPlan = {
+  id: string;
+  title: string;
+  reason: string;
+  dayLabel: string;
+  startTime: string;
+  durationMinutes: number;
 };
 
 export type PsycheSignals = {
@@ -29,51 +184,6 @@ export type PsycheDailySnapshot = {
   dateKey: string;
   signals: PsycheSignals;
   profile: MindsetProfile;
-};
-
-export type PlannerCard = {
-  todo: string;
-  habit: string;
-  calendar: {
-    title: string;
-    start: string;
-    end: string;
-  };
-};
-
-export type QuestionOption = {
-  id: string;
-  label: string;
-};
-
-export type GoalQuestion = {
-  id: string;
-  title: string;
-  type: 'text' | 'single_choice' | 'multi_choice';
-  required: boolean;
-  options?: QuestionOption[];
-  placeholder?: string;
-};
-
-export type GoalRefinementResponse = {
-  goalLabel: string;
-  goalType: string;
-  questions: GoalQuestion[];
-};
-
-export type GoalAnswerMap = Record<string, string | string[]>;
-
-export type UserPlanningProfile = {
-  energyWindow: 'morning' | 'afternoon' | 'evening' | 'mixed';
-  planningStyle: 'structured' | 'flexible' | 'mixed';
-  startStyle: 'gentle' | 'balanced' | 'intense';
-  frictionPoints: string[];
-  motivationDrivers: string[];
-  preferredSessionMinutes: number;
-  consistencyScore: number;
-  completionStyle: 'small_steps' | 'deadline_pressure' | 'varied';
-  successfulPatterns: string[];
-  failedPatterns: string[];
 };
 
 export type PlannerReasonedText = {
@@ -129,6 +239,25 @@ export type PlannerBundle = {
   }>;
 };
 
+export type GoalRefinementResponse = {
+  goalLabel: string;
+  goalType: string;
+  questions: GoalQuestion[];
+};
+
+export type UserPlanningProfile = {
+  energyWindow: 'morning' | 'afternoon' | 'evening' | 'mixed';
+  planningStyle: 'structured' | 'flexible' | 'mixed';
+  startStyle: 'gentle' | 'balanced' | 'intense';
+  frictionPoints: string[];
+  motivationDrivers: string[];
+  preferredSessionMinutes: number;
+  consistencyScore: number;
+  completionStyle: 'small_steps' | 'deadline_pressure' | 'varied';
+  successfulPatterns: string[];
+  failedPatterns: string[];
+};
+
 export type CalendarEventLike = {
   id?: string;
   title: string;
@@ -171,4 +300,66 @@ export type HabitLike = {
 export type HabitsStateLike = {
   name?: string;
   habits: HabitLike[];
+};
+export type GoalIntensityPreset = 'gentle' | 'balanced' | 'ambitious' | 'extreme';
+
+export type PsycheSuggestedTodo = {
+  id: string;
+  title: string;
+};
+
+export type PsycheSuggestedHabit = {
+  id: string;
+  title: string;
+  frequencyPerDay: number;
+};
+
+export type PsycheSuggestedCalendarBlock = {
+  id: string;
+  title: string;
+  start: string;
+  end: string;
+};
+
+export type GoalLinkEntry = {
+  goalId: string;
+  todoIds: string[];
+  habitIds: string[];
+  calendarIds: string[];
+  todoTitles: string[];
+  habitTitles: string[];
+  calendarTitles: string[];
+  updatedAt: string;
+};
+
+export type GoalLinkMap = Record<string, GoalLinkEntry>;
+export type GoalExecutionPlan = {
+  intensityPreset: GoalIntensityPreset;
+  habits: GoalHabitPlan[];
+  todos: GoalTodoPlan[];
+  calendarBlocks: GoalCalendarBlockPlan[];
+};
+
+export type PsycheGoal = {
+  id: string;
+  title: string;
+  category: GoalCategory;
+  status: GoalStatus;
+  createdAt: string;
+  startDate: string;
+  targetDate: string;
+  targetOutcome: string;
+  why?: string;
+  notes?: string;
+  userReportedProgress: number;
+  lastCheckInAt?: string;
+  metrics: GoalMetric[];
+  milestones: GoalMilestone[];
+  constraints: GoalConstraintProfile;
+  diagnostic: GoalDiagnostic;
+  requirements: GoalPlanRequirements;
+  recommendation?: GoalPlanRecommendation;
+  progress?: GoalProgressBreakdown;
+  executionPlan?: GoalExecutionPlan;
+  intensityPreset?: GoalIntensityPreset;
 };
