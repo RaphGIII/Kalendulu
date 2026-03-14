@@ -3,191 +3,136 @@ import type {
   GoalQuestion,
   GoalRefinementResponse,
   UserPlanningProfile,
-  PsycheGoal,
 } from '../types';
 
-type BuildQuestionnaireInput = {
+type Args = {
   goal: string;
-  pastGoals?: PsycheGoal[];
+  pastGoals?: Array<{ title?: string; category?: GoalCategory }>;
   profile?: UserPlanningProfile | null;
 };
 
+function normalize(input: string) {
+  return input.trim().toLowerCase();
+}
+
 function detectCategory(goal: string): GoalCategory {
-  const g = goal.toLowerCase();
+  const text = normalize(goal);
 
   if (
-    g.includes('klavier') ||
-    g.includes('gitarre') ||
-    g.includes('violine') ||
-    g.includes('drums') ||
-    g.includes('mondscheinsonate') ||
-    g.includes('instrument') ||
-    g.includes('musik') ||
-    g.includes('singen')
-  ) return 'music';
+    /fitness|muskel|abnehmen|laufen|sport|gym|körper|kraft|ausdauer|train/i.test(text)
+  ) {
+    return 'fitness';
+  }
 
   if (
-    g.includes('fit') ||
-    g.includes('muskel') ||
-    g.includes('abnehmen') ||
-    g.includes('laufen') ||
-    g.includes('marathon') ||
-    g.includes('fitness') ||
-    g.includes('sport')
-  ) return 'fitness';
+    /lernen|schule|uni|prüfung|klausur|mathe|studium|study|exam/i.test(text)
+  ) {
+    return 'study';
+  }
 
   if (
-    g.includes('lernen') ||
-    g.includes('prüfung') ||
-    g.includes('mathe') ||
-    g.includes('studium') ||
-    g.includes('schule') ||
-    g.includes('uni')
-  ) return 'study';
+    /sprache|englisch|deutsch|spanisch|französisch|italienisch|language|vokabel/i.test(text)
+  ) {
+    return 'language';
+  }
 
   if (
-    g.includes('englisch') ||
-    g.includes('sprache') ||
-    g.includes('französisch') ||
-    g.includes('spanisch')
-  ) return 'language';
+    /job|karriere|bewerbung|arbeit|praktikum|gehalt|business|startup|kunde|verkauf/i.test(text)
+  ) {
+    return /business|startup|kunde|verkauf/i.test(text) ? 'business' : 'career';
+  }
 
-  if (
-    g.includes('job') ||
-    g.includes('karriere') ||
-    g.includes('bewerbung') ||
-    g.includes('arbeit') ||
-    g.includes('beförderung')
-  ) return 'career';
+  if (/musik|gitarre|klavier|singen|rap|beat|song/i.test(text)) {
+    return 'music';
+  }
 
-  if (
-    g.includes('business') ||
-    g.includes('kunden') ||
-    g.includes('verkauf') ||
-    g.includes('shop') ||
-    g.includes('firma')
-  ) return 'business';
+  if (/mindset|selbstbewusst|disziplin|fokus|mental|psyche|routine/i.test(text)) {
+    return 'mindset';
+  }
 
-  if (
-    g.includes('selbstbewusst') ||
-    g.includes('mindset') ||
-    g.includes('disziplin') ||
-    g.includes('mental')
-  ) return 'mindset';
+  if (/gesund|schlaf|ernährung|stress|health/i.test(text)) {
+    return 'health';
+  }
 
-  if (
-    g.includes('gesund') ||
-    g.includes('schlaf') ||
-    g.includes('stress') ||
-    g.includes('ernährung')
-  ) return 'health';
-
-  if (
-    g.includes('zeichnen') ||
-    g.includes('schreiben') ||
-    g.includes('kreativ') ||
-    g.includes('design')
-  ) return 'creative';
+  if (/zeichnen|schreiben|design|kreativ|creative|video|content/i.test(text)) {
+    return 'creative';
+  }
 
   return 'other';
 }
 
-function estimateQuestionDepth(goal: string): 'basic' | 'deep' | 'very_deep' {
-  const g = goal.toLowerCase();
-  let score = 0;
-
-  const keywords = [
-    'bis',
-    'lernen',
-    'bestehen',
-    'aufbauen',
-    'business',
-    'firma',
-    'mondscheinsonate',
-    'marathon',
-    'fließend',
-    'professionell',
-    'perfekt',
-    'komplett',
-  ];
-
-  for (const word of keywords) {
-    if (g.includes(word)) score += 1;
-  }
-
-  if (g.length > 40) score += 2;
-  else if (g.length > 24) score += 1;
-
-  if (score >= 4) return 'very_deep';
-  if (score >= 2) return 'deep';
-  return 'basic';
-}
-
-function commonQuestions(profile?: UserPlanningProfile | null): GoalQuestion[] {
-  const preferredMinutes =
-    typeof profile?.preferredSessionMinutes === 'number'
-      ? profile.preferredSessionMinutes
-      : 30;
+function buildBaseQuestions(goal: string, profile?: UserPlanningProfile | null): GoalQuestion[] {
+  const preferredMinutes = Math.max(15, Math.min(120, profile?.preferredSessionMinutes ?? 30));
 
   return [
     {
-      id: 'goal_deadline',
-      title: 'Bis wann möchtest du dieses Ziel erreichen?',
-      type: 'date',
+      id: 'outcome',
+      title: 'Was willst du ganz konkret erreichen?',
+      type: 'text',
       required: true,
-      section: 'Zielrahmen',
+      placeholder: `Zum Beispiel: "${goal}" in einer messbaren Form`,
+      helpText: 'So konkret wie möglich. Nicht nur Wunsch, sondern klarer Zielzustand.',
+      section: 'Ziel',
     },
     {
-      id: 'goal_importance',
-      title: 'Wie wichtig ist dir dieses Ziel gerade?',
-      type: 'scale',
+      id: 'why',
+      title: 'Warum ist dir das wirklich wichtig?',
+      type: 'text',
       required: true,
-      min: 1,
-      max: 10,
-      step: 1,
-      helpText: '1 = eher nett, 10 = extrem wichtig',
-      section: 'Zielrahmen',
+      placeholder: 'Was verbessert sich dadurch in deinem Leben?',
+      section: 'Ziel',
     },
     {
       id: 'current_level',
       title: 'Wo stehst du aktuell?',
       type: 'text',
       required: true,
-      placeholder: 'z. B. Anfänger, Grundlagen vorhanden, früher gemacht ...',
+      placeholder: 'Anfänger, schon Erfahrung, gerade wieder eingestiegen ...',
       section: 'Ausgangslage',
     },
     {
-      id: 'biggest_blocker',
-      title: 'Was hält dich aktuell am meisten zurück?',
+      id: 'deadline',
+      title: 'Bis wann ungefähr?',
       type: 'text',
       required: true,
-      placeholder: 'z. B. Zeit, Struktur, Unsicherheit, Aufschieben ...',
-      section: 'Ausgangslage',
+      placeholder: 'z. B. in 2 Wochen, in 3 Monaten, nächstes Jahr oder 15.06.2026',
+      helpText: 'Relative Angaben werden verstanden und später für den Kalender genutzt.',
+      section: 'Zeitrahmen',
     },
     {
-      id: 'available_days',
+      id: 'days_per_week',
       title: 'An wie vielen Tagen pro Woche kannst du realistisch daran arbeiten?',
-      type: 'number',
+      type: 'single_choice',
       required: true,
-      min: 1,
-      max: 7,
-      step: 1,
-      section: 'Zeit & Energie',
+      options: [
+        { id: '2', label: '2 Tage' },
+        { id: '3', label: '3 Tage' },
+        { id: '4', label: '4 Tage' },
+        { id: '5', label: '5 Tage' },
+        { id: '6', label: '6 Tage' },
+        { id: '7', label: '7 Tage' },
+      ],
+      section: 'Zeitrahmen',
     },
     {
       id: 'minutes_per_day',
-      title: 'Wie viele Minuten pro Einheit sind realistisch?',
-      type: 'number',
+      title: 'Wie viele Minuten pro Tag sind realistisch?',
+      type: 'single_choice',
       required: true,
-      min: 10,
-      max: 240,
-      step: 5,
-      helpText: `Dein Profil deutet aktuell ungefähr auf ${preferredMinutes} Minuten hin.`,
-      section: 'Zeit & Energie',
+      options: [
+        { id: '15', label: '15 Minuten' },
+        { id: '20', label: '20 Minuten' },
+        { id: '30', label: '30 Minuten' },
+        { id: '45', label: '45 Minuten' },
+        { id: '60', label: '60 Minuten' },
+        { id: '90', label: '90 Minuten' },
+      ],
+      helpText: `Auf Basis deines bisherigen Profils sind ${preferredMinutes} Minuten ein guter Richtwert.`,
+      section: 'Zeitrahmen',
     },
     {
-      id: 'preferred_time',
-      title: 'Wann arbeitest du am besten daran?',
+      id: 'best_time',
+      title: 'Wann klappt es bei dir am besten?',
       type: 'single_choice',
       required: true,
       options: [
@@ -196,320 +141,201 @@ function commonQuestions(profile?: UserPlanningProfile | null): GoalQuestion[] {
         { id: 'evening', label: 'Abends' },
         { id: 'mixed', label: 'Unterschiedlich' },
       ],
-      section: 'Zeit & Energie',
+      section: 'Rhythmus',
     },
     {
-      id: 'learning_speed',
-      title: 'Wie schnell lernst du neue Dinge normalerweise?',
-      type: 'single_choice',
-      required: true,
-      options: [
-        { id: 'slow', label: 'Eher langsam' },
-        { id: 'normal', label: 'Normal' },
-        { id: 'fast', label: 'Eher schnell' },
-      ],
-      section: 'Lernstil',
-    },
-    {
-      id: 'motivation_pattern',
-      title: 'Was hilft dir am ehesten dranzubleiben?',
-      type: 'multi_choice',
-      required: true,
-      options: [
-        { id: 'structure', label: 'Klare Struktur' },
-        { id: 'small_steps', label: 'Kleine schnelle Erfolge' },
-        { id: 'pressure', label: 'Etwas Druck / Deadline' },
-        { id: 'variety', label: 'Abwechslung' },
-        { id: 'tracking', label: 'Fortschritt sichtbar sehen' },
-        { id: 'identity', label: 'Stärkeres Selbstbild' },
-      ],
-      section: 'Lernstil',
-    },
-  ];
-}
-
-function deepQuestions(): GoalQuestion[] {
-  return [
-    {
-      id: 'why_this_goal_matters',
-      title: 'Warum ist dir dieses Ziel wirklich wichtig?',
-      type: 'text',
-      required: true,
-      placeholder: 'Was verändert sich für dich, wenn du es erreichst?',
-      section: 'Tiefe Analyse',
-    },
-    {
-      id: 'past_attempts',
-      title: 'Hast du etwas Ähnliches schon einmal versucht?',
-      type: 'text',
-      required: false,
-      placeholder: 'Was hat funktioniert, was nicht?',
-      section: 'Tiefe Analyse',
-    },
-    {
-      id: 'consistency_risk',
-      title: 'Was gefährdet deine Konstanz am meisten?',
+      id: 'obstacles',
+      title: 'Was hält dich meistens davon ab dranzubleiben?',
       type: 'multi_choice',
       required: true,
       options: [
         { id: 'time', label: 'Zu wenig Zeit' },
         { id: 'energy', label: 'Zu wenig Energie' },
-        { id: 'overthinking', label: 'Zu viel Nachdenken statt Starten' },
-        { id: 'perfectionism', label: 'Perfektionismus' },
-        { id: 'chaos', label: 'Zu wenig Struktur' },
-        { id: 'motivation_drop', label: 'Motivationsabfall' },
+        { id: 'focus', label: 'Ablenkung / fehlender Fokus' },
+        { id: 'overwhelm', label: 'Ich überfordere mich schnell' },
+        { id: 'unclear', label: 'Ich weiß oft nicht, was der nächste Schritt ist' },
+        { id: 'discipline', label: 'Ich verliere schnell den Rhythmus' },
       ],
-      section: 'Tiefe Analyse',
+      section: 'Hindernisse',
+    },
+    {
+      id: 'plan_style',
+      title: 'Wie soll der Plan sich anfühlen?',
+      type: 'single_choice',
+      required: true,
+      options: [
+        { id: 'small_steps', label: 'Kleine, einfache Schritte' },
+        { id: 'structured', label: 'Klar strukturiert' },
+        { id: 'flexible', label: 'Flexibel, aber sinnvoll' },
+        { id: 'push', label: 'Fordernd und direkt' },
+      ],
+      section: 'Stil',
     },
   ];
 }
 
-function veryDeepQuestions(): GoalQuestion[] {
-  return [
-    {
-      id: 'success_definition',
-      title: 'Woran erkennt man ganz konkret, dass du das Ziel erreicht hast?',
-      type: 'text',
-      required: true,
-      placeholder: 'Beschreibe das Ziel messbar und sichtbar.',
-      section: 'Präzisierung',
-    },
-    {
-      id: 'minimum_version',
-      title: 'Was wäre eine kleinere, aber trotzdem wertvolle Version dieses Ziels?',
-      type: 'text',
-      required: false,
-      placeholder: 'Falls das Hauptziel zu groß wird: was wäre eine starke Zwischenversion?',
-      section: 'Präzisierung',
-    },
-    {
-      id: 'support_system',
-      title: 'Was oder wer könnte dich beim Dranbleiben unterstützen?',
-      type: 'text',
-      required: false,
-      placeholder: 'z. B. Lehrer, Coach, Freund, Umgebung, Tools ...',
-      section: 'Präzisierung',
-    },
-    {
-      id: 'stress_response',
-      title: 'Wie reagierst du meist, wenn Druck steigt?',
-      type: 'single_choice',
-      required: true,
-      options: [
-        { id: 'perform_better', label: 'Ich liefere eher besser' },
-        { id: 'mixed', label: 'Mal so, mal so' },
-        { id: 'avoidance', label: 'Ich neige dann zum Aufschieben' },
-      ],
-      section: 'Präzisierung',
-    },
-  ];
-}
-
-function musicQuestions(): GoalQuestion[] {
-  return [
-    {
-      id: 'music_experience',
-      title: 'Wie viel instrumentale Vorerfahrung hast du?',
-      type: 'single_choice',
-      required: true,
-      options: [
-        { id: 'none', label: 'Keine' },
-        { id: 'little', label: 'Wenig' },
-        { id: 'some', label: 'Etwas' },
-        { id: 'strong', label: 'Viel' },
-      ],
-      section: 'Fachspezifisch',
-    },
-    {
-      id: 'music_reading',
-      title: 'Kannst du Noten lesen?',
-      type: 'single_choice',
-      required: true,
-      options: [
-        { id: 'no', label: 'Nein' },
-        { id: 'basic', label: 'Ein bisschen' },
-        { id: 'yes', label: 'Ja' },
-      ],
-      section: 'Fachspezifisch',
-    },
-    {
-      id: 'music_main_gap',
-      title: 'Was fehlt dir am meisten?',
-      type: 'multi_choice',
-      required: true,
-      options: [
-        { id: 'technique', label: 'Technik' },
-        { id: 'timing', label: 'Timing / Rhythmus' },
-        { id: 'coordination', label: 'Koordination' },
-        { id: 'consistency', label: 'Konstanz' },
-        { id: 'theory', label: 'Theorie / Notenverständnis' },
-        { id: 'confidence', label: 'Sicherheit' },
-      ],
-      section: 'Fachspezifisch',
-    },
-  ];
-}
-
-function fitnessQuestions(): GoalQuestion[] {
+function buildFitnessQuestions(): GoalQuestion[] {
   return [
     {
       id: 'fitness_goal_type',
-      title: 'Worum geht es hauptsächlich?',
+      title: 'Was ist hier das Hauptziel?',
       type: 'single_choice',
       required: true,
       options: [
         { id: 'lose_weight', label: 'Abnehmen' },
         { id: 'build_muscle', label: 'Muskelaufbau' },
-        { id: 'endurance', label: 'Ausdauer' },
-        { id: 'general', label: 'Allgemein fitter werden' },
+        { id: 'body_recomp', label: 'Fetter runter, Form besser' },
+        { id: 'routine', label: 'Trainingsroutine aufbauen' },
       ],
-      section: 'Fachspezifisch',
+      section: 'Fitness',
     },
     {
-      id: 'fitness_current_state',
-      title: 'Wie aktiv bist du aktuell?',
+      id: 'fitness_equipment',
+      title: 'Wie trainierst du am ehesten?',
       type: 'single_choice',
       required: true,
       options: [
-        { id: 'inactive', label: 'Kaum aktiv' },
-        { id: 'light', label: 'Etwas aktiv' },
-        { id: 'moderate', label: 'Regelmäßig aktiv' },
-        { id: 'strong', label: 'Sehr aktiv' },
+        { id: 'gym', label: 'Im Gym' },
+        { id: 'home', label: 'Zuhause' },
+        { id: 'outdoor', label: 'Draußen' },
+        { id: 'mixed', label: 'Gemischt' },
       ],
-      section: 'Fachspezifisch',
+      section: 'Fitness',
     },
     {
-      id: 'fitness_limitations',
-      title: 'Gibt es Einschränkungen oder Probleme?',
+      id: 'fitness_food_problem',
+      title: 'Was ist aktuell beim Essen das größte Problem?',
+      type: 'single_choice',
+      required: true,
+      options: [
+        { id: 'snacking', label: 'Zu viele Snacks' },
+        { id: 'portion', label: 'Zu große Portionen' },
+        { id: 'sweets', label: 'Süßes / Softdrinks' },
+        { id: 'structure', label: 'Keine klare Struktur' },
+        { id: 'not_sure', label: 'Ich bin mir nicht sicher' },
+      ],
+      section: 'Fitness',
+    },
+    {
+      id: 'fitness_current_stats',
+      title: 'Optional: Gewicht / Größe / grober Startpunkt',
       type: 'text',
       required: false,
-      placeholder: 'z. B. Knie, Rücken, wenig Schlaf ...',
-      section: 'Fachspezifisch',
+      placeholder: 'z. B. 82 kg, 1,80 m, wenig Sport in letzter Zeit',
+      section: 'Fitness',
     },
   ];
 }
 
-function studyQuestions(): GoalQuestion[] {
+function buildStudyQuestions(): GoalQuestion[] {
   return [
     {
-      id: 'study_subject',
-      title: 'Welches Fach oder Thema ist es genau?',
-      type: 'text',
-      required: true,
-      section: 'Fachspezifisch',
-    },
-    {
-      id: 'study_exam_date',
-      title: 'Gibt es eine Prüfung oder einen festen Termin?',
-      type: 'date',
-      required: false,
-      section: 'Fachspezifisch',
-    },
-    {
-      id: 'study_main_problem',
-      title: 'Was ist aktuell das größte Lernproblem?',
-      type: 'multi_choice',
+      id: 'study_focus',
+      title: 'Was ist dein Hauptfokus?',
+      type: 'single_choice',
       required: true,
       options: [
-        { id: 'focus', label: 'Konzentration' },
-        { id: 'understanding', label: 'Verständnis' },
-        { id: 'consistency', label: 'Zu unregelmäßig' },
-        { id: 'memory', label: 'Merken / Wiederholen' },
-        { id: 'overwhelm', label: 'Zu viel Stoff' },
+        { id: 'exam', label: 'Prüfung bestehen' },
+        { id: 'understand', label: 'Stoff wirklich verstehen' },
+        { id: 'catch_up', label: 'Rückstand aufholen' },
+        { id: 'routine', label: 'Lernroutine aufbauen' },
       ],
-      section: 'Fachspezifisch',
+      section: 'Lernen',
     },
   ];
 }
 
-function languageQuestions(): GoalQuestion[] {
+function buildLanguageQuestions(): GoalQuestion[] {
   return [
     {
-      id: 'language_name',
-      title: 'Welche Sprache ist es?',
-      type: 'text',
-      required: true,
-      section: 'Fachspezifisch',
-    },
-    {
-      id: 'language_level',
-      title: 'Wie ist dein aktuelles Niveau?',
+      id: 'language_focus',
+      title: 'Was willst du vor allem verbessern?',
       type: 'single_choice',
-      required: true,
-      options: [
-        { id: 'a0', label: 'Anfänger ohne Vorkenntnisse' },
-        { id: 'a1', label: 'A1/A2' },
-        { id: 'b1', label: 'B1/B2' },
-        { id: 'c1', label: 'C1+' },
-      ],
-      section: 'Fachspezifisch',
-    },
-    {
-      id: 'language_priority',
-      title: 'Was ist am wichtigsten?',
-      type: 'multi_choice',
       required: true,
       options: [
         { id: 'speaking', label: 'Sprechen' },
-        { id: 'listening', label: 'Hören' },
-        { id: 'writing', label: 'Schreiben' },
-        { id: 'reading', label: 'Lesen' },
+        { id: 'listening', label: 'Verstehen' },
         { id: 'vocabulary', label: 'Wortschatz' },
         { id: 'grammar', label: 'Grammatik' },
       ],
-      section: 'Fachspezifisch',
+      section: 'Sprache',
     },
   ];
 }
 
-function defaultQuestions(): GoalQuestion[] {
+function buildCareerQuestions(): GoalQuestion[] {
   return [
     {
-      id: 'custom_success_definition',
-      title: 'Woran erkennt man ganz konkret, dass du das Ziel erreicht hast?',
-      type: 'text',
+      id: 'career_focus',
+      title: 'Was bringt dich hier am stärksten voran?',
+      type: 'single_choice',
       required: true,
-      placeholder: 'Beschreibe das Ergebnis möglichst konkret.',
-      section: 'Fachspezifisch',
+      options: [
+        { id: 'applications', label: 'Bewerbungen / Akquise' },
+        { id: 'portfolio', label: 'Portfolio / Projekte' },
+        { id: 'network', label: 'Kontakte / Netzwerk' },
+        { id: 'skill', label: 'Relevante Fähigkeit ausbauen' },
+      ],
+      section: 'Karriere',
     },
+  ];
+}
+
+function buildOtherQuestions(): GoalQuestion[] {
+  return [
     {
-      id: 'custom_main_gap',
-      title: 'Was fehlt zwischen deinem aktuellen Stand und dem Ziel am meisten?',
+      id: 'success_picture',
+      title: 'Woran würdest du in ein paar Wochen merken, dass du auf dem richtigen Weg bist?',
       type: 'text',
       required: true,
-      section: 'Fachspezifisch',
+      placeholder: 'Was soll sichtbar anders sein?',
+      section: 'Details',
     },
   ];
 }
 
 function buildCategoryQuestions(category: GoalCategory): GoalQuestion[] {
   switch (category) {
-    case 'music':
-      return musicQuestions();
     case 'fitness':
-      return fitnessQuestions();
+      return buildFitnessQuestions();
     case 'study':
-      return studyQuestions();
+      return buildStudyQuestions();
     case 'language':
-      return languageQuestions();
+      return buildLanguageQuestions();
+    case 'career':
+    case 'business':
+      return buildCareerQuestions();
     default:
-      return defaultQuestions();
+      return buildOtherQuestions();
   }
 }
 
-export function buildDynamicGoalQuestionnaire(
-  input: BuildQuestionnaireInput
-): GoalRefinementResponse {
-  const category = detectCategory(input.goal);
-  const depth = estimateQuestionDepth(input.goal);
+export function buildDynamicGoalQuestionnaire({
+  goal,
+  pastGoals,
+  profile,
+}: Args): GoalRefinementResponse {
+  const category = detectCategory(goal);
+  const categoryQuestions = buildCategoryQuestions(category);
 
-  const base = [...commonQuestions(input.profile), ...buildCategoryQuestions(category)];
-  const extraDeep = depth === 'deep' || depth === 'very_deep' ? deepQuestions() : [];
-  const maxDeep = depth === 'very_deep' ? veryDeepQuestions() : [];
+  const repeatedCategory = pastGoals?.some((item) => item.category === category) ?? false;
+
+  const extraQuestion: GoalQuestion[] = repeatedCategory
+    ? [
+        {
+          id: 'past_problem',
+          title: 'Was lief bei ähnlichen Zielen bisher schief?',
+          type: 'text',
+          required: true,
+          placeholder: 'Zu groß geplant, zu unklar, zu spät gestartet ...',
+          section: 'Erfahrung',
+        },
+      ]
+    : [];
 
   return {
-    goalLabel: input.goal.trim(),
+    goalLabel: goal.trim(),
     goalType: category,
-    questions: [...base, ...extraDeep, ...maxDeep],
+    questions: [...buildBaseQuestions(goal, profile), ...categoryQuestions, ...extraQuestion],
   };
 }

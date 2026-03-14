@@ -1,27 +1,25 @@
-import React, { useMemo, useState, useEffect } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
-  View,
-  Text,
+  KeyboardAvoidingView,
   Modal,
-  TextInput,
+  Platform,
   Pressable,
   StyleSheet,
-  Platform,
-  KeyboardAvoidingView,
+  Text,
+  TextInput,
+  View,
 } from 'react-native';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import dayjs from 'dayjs';
+
 import { CalEvent } from './types';
-import { EVENT_COLORS, THEME, ACCENT_GOLD } from './colors';
+import { ACCENT_GOLD, EVENT_COLORS, THEME } from './colors';
 
 type Props = {
   visible: boolean;
   onClose: () => void;
 
-  // create
   onCreate: (event: CalEvent) => void;
-
-  // edit
   onUpdate: (event: CalEvent) => void;
   onDelete: (id: string) => void;
 
@@ -31,11 +29,25 @@ type Props = {
 
 type PickerKind = 'date' | 'start' | 'end' | null;
 
-function roundTo15Min(d: Date) {
-  const m = dayjs(d);
+function uid() {
+  return `${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+}
+
+function roundTo15Min(date: Date) {
+  const m = dayjs(date);
   const mins = m.minute();
   const rounded = Math.round(mins / 15) * 15;
+
   return m.minute(rounded).second(0).millisecond(0).toDate();
+}
+
+function combineDateAndTime(baseDate: Date, timeSource: Date) {
+  return dayjs(baseDate)
+    .hour(dayjs(timeSource).hour())
+    .minute(dayjs(timeSource).minute())
+    .second(0)
+    .millisecond(0)
+    .toDate();
 }
 
 export default function EventModal({
@@ -47,182 +59,218 @@ export default function EventModal({
   defaultDate,
   initialEvent,
 }: Props) {
-  const isEdit = !!initialEvent;
+  const isEditing = !!initialEvent;
 
-  const base = useMemo(() => dayjs(defaultDate).second(0).millisecond(0), [defaultDate]);
+  const defaultStart = useMemo(() => {
+    if (initialEvent?.start) return initialEvent.start;
+    return roundTo15Min(defaultDate);
+  }, [defaultDate, initialEvent]);
+
+  const defaultEnd = useMemo(() => {
+    if (initialEvent?.end) return initialEvent.end;
+    return dayjs(defaultStart).add(1, 'hour').toDate();
+  }, [defaultStart, initialEvent]);
 
   const [title, setTitle] = useState('');
   const [location, setLocation] = useState('');
-  const [color, setColor] = useState(EVENT_COLORS[0]);
+  const [description, setDescription] = useState('');
+  const [color, setColor] = useState(EVENT_COLORS[0] ?? ACCENT_GOLD);
 
-  const [date, setDate] = useState<Date>(base.toDate());
-  const [start, setStart] = useState<Date>(roundTo15Min(base.hour(9).minute(0).toDate()));
-  const [end, setEnd] = useState<Date>(roundTo15Min(base.hour(10).minute(0).toDate()));
+  const [dateValue, setDateValue] = useState<Date>(defaultStart);
+  const [startTime, setStartTime] = useState<Date>(defaultStart);
+  const [endTime, setEndTime] = useState<Date>(defaultEnd);
 
-  const [picker, setPicker] = useState<PickerKind>(null);
+  const [pickerKind, setPickerKind] = useState<PickerKind>(null);
 
   useEffect(() => {
     if (!visible) return;
 
-    if (initialEvent) {
-      setTitle(initialEvent.title ?? '');
-      setLocation(initialEvent.location ?? '');
-      setColor(initialEvent.color ?? EVENT_COLORS[0]);
+    const nextStart = initialEvent?.start ?? roundTo15Min(defaultDate);
+    const nextEnd = initialEvent?.end ?? dayjs(nextStart).add(1, 'hour').toDate();
 
-      const s = dayjs(initialEvent.start);
-      const e = dayjs(initialEvent.end);
-      setDate(s.startOf('day').toDate());
-      setStart(roundTo15Min(s.toDate()));
-      setEnd(roundTo15Min(e.toDate()));
-    } else {
-      setTitle('');
-      setLocation('');
-      setColor(EVENT_COLORS[0]);
+    setTitle(initialEvent?.title ?? '');
+    setLocation(initialEvent?.location ?? '');
+    setDescription(initialEvent?.description ?? '');
+    setColor(initialEvent?.color ?? EVENT_COLORS[0] ?? ACCENT_GOLD);
+    setDateValue(nextStart);
+    setStartTime(nextStart);
+    setEndTime(nextEnd);
+    setPickerKind(null);
+  }, [visible, initialEvent, defaultDate]);
 
-      setDate(base.toDate());
-      setStart(roundTo15Min(base.hour(9).minute(0).toDate()));
-      setEnd(roundTo15Min(base.hour(10).minute(0).toDate()));
+  function submit() {
+    const trimmedTitle = title.trim();
+    if (!trimmedTitle) return;
+
+    const start = combineDateAndTime(dateValue, startTime);
+    let end = combineDateAndTime(dateValue, endTime);
+
+    if (dayjs(end).isSame(start) || dayjs(end).isBefore(start)) {
+      end = dayjs(start).add(30, 'minute').toDate();
     }
 
-    setPicker(null);
-  }, [visible, initialEvent, base]);
+    const event: CalEvent = {
+      id: initialEvent?.id ?? uid(),
+      title: trimmedTitle,
+      start,
+      end,
+      color,
+      location: location.trim() || undefined,
+      description: description.trim() || undefined,
+    };
 
-  function closeOnly() {
-    setPicker(null);
+    if (isEditing) {
+      onUpdate(event);
+    } else {
+      onCreate(event);
+    }
+
     onClose();
   }
 
-  function handleSubmit() {
-    const t = title.trim();
-    if (!t) return;
-
-    const day = dayjs(date);
-    const s = dayjs(start);
-    const e = dayjs(end);
-
-    const startDT = day.hour(s.hour()).minute(s.minute()).second(0).millisecond(0);
-    let endDT = day.hour(e.hour()).minute(e.minute()).second(0).millisecond(0);
-
-    if (endDT.isSame(startDT) || endDT.isBefore(startDT)) {
-      endDT = startDT.add(1, 'hour');
+  function handlePickerChange(_: any, picked?: Date) {
+    if (!picked || !pickerKind) {
+      setPickerKind(null);
+      return;
     }
 
-    const payload: CalEvent = {
-      id: initialEvent?.id ?? Date.now().toString(),
-      title: t,
-      location: location.trim() || undefined,
-      start: startDT.toDate(),
-      end: endDT.toDate(),
-      color,
-    };
+    if (pickerKind === 'date') {
+      setDateValue(picked);
+    } else if (pickerKind === 'start') {
+      setStartTime(picked);
 
-    if (isEdit) onUpdate(payload);
-    else onCreate(payload);
+      const combinedStart = combineDateAndTime(dateValue, picked);
+      const combinedEnd = combineDateAndTime(dateValue, endTime);
 
-    closeOnly();
+      if (!dayjs(combinedEnd).isAfter(combinedStart)) {
+        setEndTime(dayjs(picked).add(1, 'hour').toDate());
+      }
+    } else if (pickerKind === 'end') {
+      setEndTime(picked);
+    }
+
+    if (Platform.OS !== 'ios') {
+      setPickerKind(null);
+    }
   }
 
-  const pickerValue =
-    picker === 'date' ? date : picker === 'start' ? start : picker === 'end' ? end : new Date();
-
-  const pickerMode = picker === 'date' ? 'date' : 'time';
-
   return (
-    <Modal visible={visible} animationType="fade" transparent>
-      <KeyboardAvoidingView style={styles.overlay} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-        <View style={styles.card}>
-          <Text style={styles.title}>{isEdit ? 'Termin bearbeiten' : 'Neuer Termin'}</Text>
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        style={styles.backdrop}
+      >
+        <View style={styles.sheet}>
+          <View style={styles.header}>
+            <Text style={styles.title}>
+              {isEditing ? 'Termin bearbeiten' : 'Neuer Termin'}
+            </Text>
+
+            <Pressable onPress={onClose} style={styles.closeBtn}>
+              <Text style={styles.closeBtnText}>Schließen</Text>
+            </Pressable>
+          </View>
 
           <TextInput
-            placeholder="Titel"
-            placeholderTextColor="rgba(255,255,255,0.45)"
             value={title}
             onChangeText={setTitle}
+            placeholder="Titel"
+            placeholderTextColor="rgba(255,255,255,0.35)"
             style={styles.input}
-            returnKeyType="done"
           />
 
           <TextInput
-            placeholder="Ort (optional)"
-            placeholderTextColor="rgba(255,255,255,0.45)"
-            value={location}
-            onChangeText={setLocation}
-            style={styles.input}
-            returnKeyType="done"
+            value={description}
+            onChangeText={setDescription}
+            placeholder="Beschreibung"
+            placeholderTextColor="rgba(255,255,255,0.35)"
+            style={[styles.input, styles.textarea]}
+            multiline
           />
 
-          <View style={styles.row}>
-            <Pressable onPress={() => setPicker('date')} style={styles.pill}>
-              <Text style={styles.pillText}>{dayjs(date).format('DD.MM.YYYY')}</Text>
+          <TextInput
+            value={location}
+            onChangeText={setLocation}
+            placeholder="Ort"
+            placeholderTextColor="rgba(255,255,255,0.35)"
+            style={styles.input}
+          />
+
+          <Text style={styles.label}>Zeit</Text>
+
+          <View style={styles.timeGrid}>
+            <Pressable onPress={() => setPickerKind('date')} style={styles.timeCard}>
+              <Text style={styles.timeCardLabel}>Datum</Text>
+              <Text style={styles.timeCardValue}>{dayjs(dateValue).format('DD.MM.YYYY')}</Text>
             </Pressable>
 
-            <Pressable onPress={() => setPicker('start')} style={styles.pill}>
-              <Text style={styles.pillText}>Start: {dayjs(start).format('HH:mm')}</Text>
+            <Pressable onPress={() => setPickerKind('start')} style={styles.timeCard}>
+              <Text style={styles.timeCardLabel}>Start</Text>
+              <Text style={styles.timeCardValue}>{dayjs(startTime).format('HH:mm')}</Text>
             </Pressable>
 
-            <Pressable onPress={() => setPicker('end')} style={styles.pill}>
-              <Text style={styles.pillText}>Ende: {dayjs(end).format('HH:mm')}</Text>
+            <Pressable onPress={() => setPickerKind('end')} style={styles.timeCard}>
+              <Text style={styles.timeCardLabel}>Ende</Text>
+              <Text style={styles.timeCardValue}>{dayjs(endTime).format('HH:mm')}</Text>
             </Pressable>
           </View>
 
           <Text style={styles.label}>Farbe</Text>
           <View style={styles.colorRow}>
-            {EVENT_COLORS.map((c) => (
-              <Pressable
-                key={c}
-                onPress={() => setColor(c)}
-                style={[styles.colorCircle, { backgroundColor: c }, color === c && styles.colorSelected]}
-              />
-            ))}
+            {EVENT_COLORS.map((item) => {
+              const active = item === color;
+
+              return (
+                <Pressable
+                  key={item}
+                  onPress={() => setColor(item)}
+                  style={[
+                    styles.colorDot,
+                    { backgroundColor: item },
+                    active && styles.colorDotActive,
+                  ]}
+                />
+              );
+            })}
           </View>
 
-          <View style={styles.buttonRow}>
-            {isEdit ? (
+          {pickerKind ? (
+            <View style={styles.pickerWrap}>
+              <DateTimePicker
+                value={
+                  pickerKind === 'date'
+                    ? dateValue
+                    : pickerKind === 'start'
+                      ? startTime
+                      : endTime
+                }
+                mode={pickerKind === 'date' ? 'date' : 'time'}
+                display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                onChange={handlePickerChange}
+                is24Hour
+              />
+            </View>
+          ) : null}
+
+          <View style={styles.actions}>
+            {isEditing && initialEvent ? (
               <Pressable
                 onPress={() => {
-                  if (initialEvent) onDelete(initialEvent.id);
-                  closeOnly();
+                  onDelete(initialEvent.id);
+                  onClose();
                 }}
                 style={styles.deleteBtn}
               >
-                <Text style={styles.deleteText}>Löschen</Text>
+                <Text style={styles.deleteBtnText}>Löschen</Text>
               </Pressable>
-            ) : (
-              <Pressable onPress={closeOnly} style={styles.cancelBtn}>
-                <Text style={styles.cancelText}>Abbrechen</Text>
-              </Pressable>
-            )}
+            ) : null}
 
-            <Pressable onPress={handleSubmit} style={[styles.saveBtn, { backgroundColor: ACCENT_GOLD }]}>
-              <Text style={styles.saveText}>{isEdit ? 'Speichern' : 'Erstellen'}</Text>
+            <Pressable onPress={submit} style={styles.saveBtn}>
+              <Text style={styles.saveBtnText}>
+                {isEditing ? 'Speichern' : 'Erstellen'}
+              </Text>
             </Pressable>
           </View>
-
-          {!!picker && (
-            <View style={styles.pickerWrap}>
-              <DateTimePicker
-                value={pickerValue}
-                mode={pickerMode as any}
-                display={Platform.OS === 'ios' ? 'spinner' : 'default'}
-                is24Hour
-                onChange={(_, selected) => {
-                  if (!selected) return;
-
-                  if (picker === 'date') setDate(selected);
-                  if (picker === 'start') setStart(roundTo15Min(selected));
-                  if (picker === 'end') setEnd(roundTo15Min(selected));
-
-                  if (Platform.OS !== 'ios') setPicker(null);
-                }}
-              />
-
-              {Platform.OS === 'ios' && (
-                <Pressable onPress={() => setPicker(null)} style={styles.doneBtn}>
-                  <Text style={styles.doneText}>Fertig</Text>
-                </Pressable>
-              )}
-            </View>
-          )}
         </View>
       </KeyboardAvoidingView>
     </Modal>
@@ -230,83 +278,138 @@ export default function EventModal({
 }
 
 const styles = StyleSheet.create({
-  overlay: {
+  backdrop: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.55)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 16,
+    backgroundColor: 'rgba(7,10,18,0.55)',
+    justifyContent: 'flex-end',
   },
-  card: {
-    width: '100%',
-    maxWidth: 420,
-    backgroundColor: '#0F2454',
-    borderRadius: 22,
+  sheet: {
+    backgroundColor: THEME.bgDark,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
     padding: 18,
-    borderWidth: 1,
+    borderTopWidth: 1,
     borderColor: THEME.border,
   },
-  title: { fontSize: 18, fontWeight: '900', marginBottom: 12, color: THEME.text },
-
-  input: {
-    borderWidth: 1,
-    borderColor: THEME.border,
-    borderRadius: 14,
-    padding: 12,
-    marginBottom: 10,
-    fontWeight: '800',
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 14,
+    gap: 12,
+  },
+  title: {
     color: THEME.text,
-    backgroundColor: 'rgba(255,255,255,0.06)',
+    fontSize: 22,
+    fontWeight: '900',
   },
-
-  row: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 6, marginBottom: 12 },
-  pill: {
-    backgroundColor: 'rgba(255,255,255,0.06)',
-    borderWidth: 1,
-    borderColor: THEME.border,
-    borderRadius: 999,
+  closeBtn: {
     paddingHorizontal: 12,
     paddingVertical: 10,
-  },
-  pillText: { fontWeight: '900', color: 'rgba(255,255,255,0.92)' },
-
-  label: { fontWeight: '900', marginBottom: 8, color: THEME.muted, letterSpacing: 0.9 },
-  colorRow: { flexDirection: 'row', gap: 10, marginBottom: 14, flexWrap: 'wrap' },
-  colorCircle: { width: 28, height: 28, borderRadius: 14 },
-  colorSelected: { borderWidth: 2, borderColor: 'rgba(255,255,255,0.9)' },
-
-  buttonRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  cancelBtn: { paddingVertical: 10, paddingHorizontal: 8 },
-  cancelText: { fontWeight: '900', color: THEME.muted },
-
-  deleteBtn: {
-    backgroundColor: 'rgba(255,59,48,0.92)',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
     borderRadius: 12,
+    backgroundColor: 'rgba(255,255,255,0.08)',
   },
-  deleteText: { color: 'white', fontWeight: '900' },
-
-  saveBtn: {
-    paddingHorizontal: 18,
-    paddingVertical: 12,
-    borderRadius: 12,
+  closeBtnText: {
+    color: THEME.text,
+    fontWeight: '800',
   },
-  saveText: { color: '#0B1636', fontWeight: '900' },
-
-  pickerWrap: {
-    marginTop: 14,
-    borderTopWidth: 1,
-    borderTopColor: THEME.border,
-    paddingTop: 12,
-  },
-  doneBtn: {
-    marginTop: 10,
-    alignSelf: 'flex-end',
-    backgroundColor: ACCENT_GOLD,
+  input: {
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: THEME.border,
+    color: THEME.text,
     paddingHorizontal: 14,
-    paddingVertical: 10,
-    borderRadius: 12,
+    paddingVertical: 13,
+    fontSize: 15,
+    marginBottom: 12,
   },
-  doneText: { fontWeight: '900', color: '#0B1636' },
+  textarea: {
+    minHeight: 88,
+    textAlignVertical: 'top',
+  },
+  label: {
+    color: THEME.muted,
+    fontWeight: '900',
+    marginBottom: 8,
+    marginTop: 4,
+  },
+  timeGrid: {
+    flexDirection: 'row',
+    gap: 10,
+    marginBottom: 12,
+  },
+  timeCard: {
+    flex: 1,
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: THEME.border,
+    padding: 12,
+  },
+  timeCardLabel: {
+    color: THEME.muted,
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  timeCardValue: {
+    color: THEME.text,
+    fontSize: 15,
+    fontWeight: '900',
+    marginTop: 4,
+  },
+  colorRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 12,
+    marginBottom: 12,
+  },
+  colorDot: {
+    width: 28,
+    height: 28,
+    borderRadius: 999,
+  },
+  colorDotActive: {
+    borderWidth: 3,
+    borderColor: '#FFFFFF',
+  },
+  pickerWrap: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 12,
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: THEME.border,
+    overflow: 'hidden',
+  },
+  actions: {
+    flexDirection: 'row',
+    gap: 12,
+    marginTop: 8,
+  },
+  deleteBtn: {
+    flex: 1,
+    borderRadius: 14,
+    paddingVertical: 14,
+    alignItems: 'center',
+    backgroundColor: 'rgba(255,90,90,0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,90,90,0.25)',
+  },
+  deleteBtnText: {
+    color: '#ff9b9b',
+    fontWeight: '900',
+  },
+  saveBtn: {
+    flex: 1,
+    borderRadius: 14,
+    paddingVertical: 14,
+    alignItems: 'center',
+    backgroundColor: ACCENT_GOLD,
+  },
+  saveBtnText: {
+    color: '#0B1636',
+    fontWeight: '900',
+  },
 });

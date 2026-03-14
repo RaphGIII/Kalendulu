@@ -1,85 +1,37 @@
-type PsycheGoal = {
-  id: string;
-  title: string;
-};
+export interface Env {
+  GROQ_API_KEY: string;
+  APP_SHARED_SECRET?: string;
+  GROQ_MODEL_REFINE?: string;
+  GROQ_MODEL_PLAN?: string;
+}
 
-type PsycheSignals = {
-  habitCheckinsToday: number;
-  habitCheckins7d: number;
-  habitActiveDays7d: number;
-  tasksDoneToday: number;
-  tasksDone7d: number;
-  tasksTotal7d: number;
-  calendarHoursToday: number;
-  calendarHours7d: number;
-  calendarEarlyStartScore: number;
-  momentum7d: number;
-};
-
-type MindsetProfile = {
-  discipline: number;
-  consistency: number;
-  focus: number;
-  planning: number;
-  recovery: number;
-  momentum: number;
-};
-
-type FreeSlot = {
-  start: string;
-  end: string;
-  durationMinutes?: number;
-};
-
-type UserPlanningProfile = {
-  energyWindow: 'morning' | 'afternoon' | 'evening' | 'mixed';
-  planningStyle: 'structured' | 'flexible' | 'mixed';
-  startStyle: 'gentle' | 'balanced' | 'intense';
-  frictionPoints: string[];
-  motivationDrivers: string[];
-  preferredSessionMinutes: number;
-  consistencyScore: number;
-  completionStyle: 'small_steps' | 'deadline_pressure' | 'varied';
-  successfulPatterns: string[];
-  failedPatterns: string[];
-};
-
-type GoalAnswerMap = Record<string, string | string[]>;
-
-type GoalQuestionOption = {
-  id: string;
-  label: string;
-};
+type PlanDepth = 'compact' | 'balanced' | 'deep' | 'full_system';
 
 type GoalQuestion = {
   id: string;
   title: string;
-  type: 'text' | 'single_choice' | 'multi_choice';
+  type: 'text' | 'single_choice' | 'multi_choice' | 'long_text';
   required: boolean;
-  options?: GoalQuestionOption[];
+  options?: Array<{ id: string; label: string }>;
   placeholder?: string;
-};
-
-type GoalRefineRequest = {
-  goal: string;
-  pastGoals: PsycheGoal[];
-  profile: UserPlanningProfile;
-  existingAnswers?: GoalAnswerMap;
+  helpText?: string;
+  whyAsked?: string;
+  priority?: number;
+  section?: string;
 };
 
 type GoalRefinementResponse = {
   goalLabel: string;
   goalType: string;
   questions: GoalQuestion[];
-};
-
-type PlannerRequest = {
-  goals: PsycheGoal[];
-  profile: MindsetProfile;
-  signals: PsycheSignals;
-  freeSlots?: FreeSlot[];
-  answers?: GoalAnswerMap;
-  userPlanningProfile?: UserPlanningProfile;
+  analysis?: {
+    category?: string;
+    complexity?: string;
+    difficulty?: string;
+    rationale?: string[];
+    missingInformation?: string[];
+    recommendedQuestionCount?: number;
+  };
 };
 
 type PlannerReasonedText = {
@@ -113,6 +65,24 @@ type PlannerRoutine = {
   blocks: PlannerRoutineBlock[];
 };
 
+type PlannerExecutionChecklistItem = {
+  id: string;
+  label: string;
+  done: boolean;
+};
+
+type PlannerExecutionStep = {
+  id: string;
+  order: number;
+  title: string;
+  explanation: string;
+  whyItMatters: string;
+  estimatedDays?: number;
+  checklist: PlannerExecutionChecklistItem[];
+  linkedTodoTitles: string[];
+  linkedHabitTitles: string[];
+};
+
 type PlannerBundle = {
   primary: {
     todo: PlannerReasonedText;
@@ -131,741 +101,808 @@ type PlannerBundle = {
     habit: PlannerReasonedText;
     calendar: PlannerCalendarBlock;
   }>;
+  executionSteps?: PlannerExecutionStep[];
+  planMeta?: {
+    depth?: PlanDepth;
+    difficulty?: string;
+    complexity?: string;
+    summary?: string;
+  };
 };
 
-type Env = {
-  GROQ_API_KEY: string;
-};
-
-function json(data: unknown, init?: ResponseInit) {
+function jsonResponse(data: unknown, status = 200) {
   return new Response(JSON.stringify(data), {
-    ...init,
+    status,
     headers: {
-      'Content-Type': 'application/json',
+      'Content-Type': 'application/json; charset=utf-8',
       'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Headers': 'Content-Type',
-      'Access-Control-Allow-Methods': 'POST,OPTIONS,GET',
-      ...(init?.headers ?? {}),
+      'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-App-Secret',
     },
   });
 }
 
-function topGoal(goals: PsycheGoal[]): string {
-  return goals[0]?.title?.trim() || 'Ein persönliches Ziel';
+function errorResponse(message: string, status = 400, extra?: Record<string, unknown>) {
+  return jsonResponse({ error: message, ...extra }, status);
 }
 
-function extractJsonObject(text: string): any | null {
-  const trimmed = text.trim();
+function safeString(value: unknown, fallback = ''): string {
+  return typeof value === 'string' ? value : fallback;
+}
 
-  try {
-    return JSON.parse(trimmed);
-  } catch {
-    // ignore
-  }
+function safeNumber(value: unknown, fallback = 0): number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
+}
 
-  const first = trimmed.indexOf('{');
-  const last = trimmed.lastIndexOf('}');
-  if (first >= 0 && last > first) {
-    const slice = trimmed.slice(first, last + 1);
-    try {
-      return JSON.parse(slice);
-    } catch {
-      return null;
+function ensureArray<T>(value: unknown): T[] {
+  return Array.isArray(value) ? (value as T[]) : [];
+}
+
+function stripCodeFences(text: string): string {
+  return text
+    .replace(/^```json\s*/i, '')
+    .replace(/^```\s*/i, '')
+    .replace(/```$/i, '')
+    .trim();
+}
+
+function extractFirstJsonObject(text: string): string | null {
+  const cleaned = stripCodeFences(text);
+  const start = cleaned.indexOf('{');
+  if (start < 0) return null;
+
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (let i = start; i < cleaned.length; i += 1) {
+    const ch = cleaned[i];
+
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (ch === '\\') {
+        escaped = true;
+      } else if (ch === '"') {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (ch === '"') {
+      inString = true;
+      continue;
+    }
+
+    if (ch === '{') depth += 1;
+    if (ch === '}') depth -= 1;
+
+    if (depth === 0) {
+      return cleaned.slice(start, i + 1);
     }
   }
 
   return null;
 }
 
-function normalizeGoalRefinement(data: any): GoalRefinementResponse | null {
-  if (!data || typeof data !== 'object') return null;
-  if (typeof data.goalLabel !== 'string') return null;
-  if (typeof data.goalType !== 'string') return null;
-  if (!Array.isArray(data.questions)) return null;
-
-  const questions: GoalQuestion[] = data.questions
-    .filter(
-      (q: any) =>
-        q &&
-        typeof q.id === 'string' &&
-        typeof q.title === 'string' &&
-        (q.type === 'text' || q.type === 'single_choice' || q.type === 'multi_choice') &&
-        typeof q.required === 'boolean'
-    )
-    .map((q: any) => ({
-      id: q.id.trim(),
-      title: q.title.trim(),
-      type: q.type,
-      required: q.required,
-      options: Array.isArray(q.options)
-        ? q.options
-            .filter((o: any) => o && typeof o.id === 'string' && typeof o.label === 'string')
-            .map((o: any) => ({
-              id: o.id.trim(),
-              label: o.label.trim(),
-            }))
-            .slice(0, 10)
-        : undefined,
-      placeholder: typeof q.placeholder === 'string' ? q.placeholder.trim() : undefined,
-    }))
-    .slice(0, 10);
-
-  if (!questions.length) return null;
-
-  return {
-    goalLabel: data.goalLabel.trim(),
-    goalType: data.goalType.trim(),
-    questions,
-  };
+function tryParseJson<T>(rawText: string): T | null {
+  try {
+    return JSON.parse(rawText) as T;
+  } catch {
+    return null;
+  }
 }
 
-function normalizePlannerBundle(data: any): PlannerBundle | null {
-  if (!data || typeof data !== 'object') return null;
-  if (!data.primary || typeof data.primary !== 'object') return null;
-  if (!Array.isArray(data.alternatives)) return null;
+function parseModelJsonLoose<T>(rawText: string): T | null {
+  const direct = tryParseJson<T>(stripCodeFences(rawText));
+  if (direct) return direct;
 
-  const validText = (x: any) =>
-    x &&
-    typeof x.title === 'string' &&
-    typeof x.reason === 'string';
+  const extracted = extractFirstJsonObject(rawText);
+  if (!extracted) return null;
 
-  const validCalendar = (x: any) =>
-    x &&
-    typeof x.title === 'string' &&
-    typeof x.start === 'string' &&
-    typeof x.end === 'string' &&
-    typeof x.reason === 'string';
+  return tryParseJson<T>(extracted);
+}
 
-  const primary = data.primary;
+async function callGroqRaw({
+  env,
+  model,
+  system,
+  user,
+  temperature = 0.2,
+  maxCompletionTokens = 2200,
+  forceJson = false,
+}: {
+  env: Env;
+  model: string;
+  system: string;
+  user: string;
+  temperature?: number;
+  maxCompletionTokens?: number;
+  forceJson?: boolean;
+}): Promise<string> {
+  const body: Record<string, unknown> = {
+    model,
+    temperature,
+    max_completion_tokens: maxCompletionTokens,
+    messages: [
+      { role: 'system', content: system },
+      { role: 'user', content: user },
+    ],
+  };
 
-  if (!validText(primary.todo)) return null;
-  if (!validText(primary.habit)) return null;
-  if (!validCalendar(primary.calendar)) return null;
+  if (forceJson) {
+    body.response_format = { type: 'json_object' };
+  }
 
-  const routines: PlannerRoutine[] = Array.isArray(primary.routines)
-    ? primary.routines
-        .filter(
-          (r: any) =>
-            r &&
-            typeof r.title === 'string' &&
-            typeof r.reason === 'string' &&
-            typeof r.frequencyPerWeek === 'number' &&
-            Array.isArray(r.blocks)
-        )
-        .map((r: any) => ({
-          title: r.title.trim(),
-          reason: r.reason.trim(),
-          instruction: typeof r.instruction === 'string' ? r.instruction.trim() : undefined,
-          frequencyPerWeek: r.frequencyPerWeek,
-          durationMinutes:
-            typeof r.durationMinutes === 'number' ? r.durationMinutes : undefined,
-          reviewAfterDays:
-            typeof r.reviewAfterDays === 'number' ? r.reviewAfterDays : undefined,
-          blocks: r.blocks
-            .filter(
-              (b: any) =>
-                b &&
-                typeof b.title === 'string' &&
-                typeof b.start === 'string' &&
-                typeof b.end === 'string'
-            )
-            .map((b: any) => ({
-              title: b.title.trim(),
-              start: b.start,
-              end: b.end,
-            })),
-        }))
-        .filter((r: PlannerRoutine) => r.blocks.length > 0)
-        .slice(0, 2)
-    : [];
-
-  const alternatives = data.alternatives
-    .filter(
-      (a: any) =>
-        a &&
-        typeof a.label === 'string' &&
-        validText(a.todo) &&
-        validText(a.habit) &&
-        validCalendar(a.calendar)
-    )
-    .map((a: any) => ({
-      label: a.label.trim(),
-      todo: {
-        title: a.todo.title.trim(),
-        reason: a.todo.reason.trim(),
-        instruction:
-          typeof a.todo.instruction === 'string' ? a.todo.instruction.trim() : undefined,
-        expectedEffect:
-          typeof a.todo.expectedEffect === 'string'
-            ? a.todo.expectedEffect.trim()
-            : undefined,
-      },
-      habit: {
-        title: a.habit.title.trim(),
-        reason: a.habit.reason.trim(),
-        instruction:
-          typeof a.habit.instruction === 'string'
-            ? a.habit.instruction.trim()
-            : undefined,
-        expectedEffect:
-          typeof a.habit.expectedEffect === 'string'
-            ? a.habit.expectedEffect.trim()
-            : undefined,
-      },
-      calendar: {
-        title: a.calendar.title.trim(),
-        start: a.calendar.start,
-        end: a.calendar.end,
-        reason: a.calendar.reason.trim(),
-        instruction:
-          typeof a.calendar.instruction === 'string'
-            ? a.calendar.instruction.trim()
-            : undefined,
-      },
-    }))
-    .slice(0, 3);
-
-  return {
-    primary: {
-      todo: {
-        title: primary.todo.title.trim(),
-        reason: primary.todo.reason.trim(),
-        instruction:
-          typeof primary.todo.instruction === 'string'
-            ? primary.todo.instruction.trim()
-            : undefined,
-        expectedEffect:
-          typeof primary.todo.expectedEffect === 'string'
-            ? primary.todo.expectedEffect.trim()
-            : undefined,
-      },
-      habit: {
-        title: primary.habit.title.trim(),
-        reason: primary.habit.reason.trim(),
-        instruction:
-          typeof primary.habit.instruction === 'string'
-            ? primary.habit.instruction.trim()
-            : undefined,
-        expectedEffect:
-          typeof primary.habit.expectedEffect === 'string'
-            ? primary.habit.expectedEffect.trim()
-            : undefined,
-      },
-      calendar: {
-        title: primary.calendar.title.trim(),
-        start: primary.calendar.start,
-        end: primary.calendar.end,
-        reason: primary.calendar.reason.trim(),
-        instruction:
-          typeof primary.calendar.instruction === 'string'
-            ? primary.calendar.instruction.trim()
-            : undefined,
-      },
-      routines,
-      scheduleAdjustment: validText(primary.scheduleAdjustment)
-        ? {
-            title: primary.scheduleAdjustment.title.trim(),
-            reason: primary.scheduleAdjustment.reason.trim(),
-            instruction:
-              typeof primary.scheduleAdjustment.instruction === 'string'
-                ? primary.scheduleAdjustment.instruction.trim()
-                : undefined,
-            expectedEffect:
-              typeof primary.scheduleAdjustment.expectedEffect === 'string'
-                ? primary.scheduleAdjustment.expectedEffect.trim()
-                : undefined,
-          }
-        : undefined,
-      review:
-        primary.review &&
-        typeof primary.review.reviewAfterDays === 'number' &&
-        Array.isArray(primary.review.questions)
-          ? {
-              reviewAfterDays: primary.review.reviewAfterDays,
-              questions: primary.review.questions
-                .filter((q: any) => typeof q === 'string')
-                .slice(0, 5),
-            }
-          : undefined,
+  const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${env.GROQ_API_KEY}`,
     },
-    alternatives,
+    body: JSON.stringify(body),
+  });
+
+  const raw = await res.text();
+
+  if (!res.ok) {
+    throw new Error(`Groq error ${res.status}: ${raw}`);
+  }
+
+  const parsed = JSON.parse(raw) as {
+    choices?: Array<{ message?: { content?: string } }>;
   };
+
+  const content = parsed.choices?.[0]?.message?.content;
+  if (!content) {
+    throw new Error('Groq returned empty content.');
+  }
+
+  return content;
 }
 
-function buildFallbackGoalRefinement(body: GoalRefineRequest): GoalRefinementResponse {
-  const goal = body.goal?.trim() || 'Dein Ziel';
+function refinementSystemPrompt() {
+  return `
+You are the AI planning brain for an iOS productivity app called Kalendulu.
 
+Return ONLY valid JSON.
+No markdown.
+No explanations before the JSON.
+No explanations after the JSON.
+
+Task:
+1. Read the user's goal.
+2. Infer goal type, difficulty, complexity.
+3. Generate only the questions genuinely needed.
+4. Questions must be in German.
+5. Keep the JSON shape exact.
+
+Allowed question types:
+- text
+- long_text
+- single_choice
+- multi_choice
+
+Exact JSON shape:
+{
+  "goalLabel": "string",
+  "goalType": "fitness|study|language|career|business|mindset|research|writing|project|other",
+  "questions": [
+    {
+      "id": "string",
+      "title": "string",
+      "type": "text|long_text|single_choice|multi_choice",
+      "required": true,
+      "section": "string",
+      "whyAsked": "string",
+      "priority": 1,
+      "placeholder": "string optional",
+      "helpText": "string optional",
+      "options": [{"id":"string","label":"string"}]
+    }
+  ],
+  "analysis": {
+    "category": "string",
+    "complexity": "simple|moderate|advanced|high_complexity",
+    "difficulty": "very_easy|easy|medium|hard|very_hard",
+    "rationale": ["string"],
+    "missingInformation": ["string"],
+    "recommendedQuestionCount": 8
+  }
+}
+`.trim();
+}
+
+function plannerSystemPrompt() {
+  return `
+Language: German.
+Role: You are the "Execution-Planning Brain" for the iOS productivity app Kalendulu.
+Task: Convert a user's goal into a deterministic, high-precision execution plan.
+Output: Return ONLY valid JSON. No markdown. No prose.
+
+Core Rule:
+Every item must be a "Physical Action".
+If it's not a physical movement or a specific consumption/purchase, it's not a valid step.
+
+GOOD EXAMPLE:
+Goal = Lose 5kg Fat
+
+{
+  "execution_plan": {
+    "goal": "Fettverlust -5kg (Muskelerhalt-Fokus)",
+    "items": [
+      {
+        "type": "Calendar Block",
+        "title": "Ganzkörper-Krafttraining",
+        "schedule": "Mo, Mi, Fr 07:00",
+        "action": "3 Sätze Kniebeugen, Liegestütze, Rudern bis zum Muskelversagen."
+      },
+      {
+        "type": "Habit",
+        "title": "Protein-Sättigung",
+        "schedule": "Täglich 08:00 & 13:00",
+        "action": "Konsumiere 40g Protein pro Mahlzeit (Eier, Quark, Fleisch oder Tofu)."
+      },
+      {
+        "type": "Habit",
+        "title": "NEAT-Basis",
+        "schedule": "Täglich bis 20:00",
+        "action": "Erreiche 10.000 Schritte. Nutze Treppen statt Aufzug."
+      },
+      {
+        "type": "Todo",
+        "title": "Kühlschrank-Inventur",
+        "deadline": "Heute 18:00",
+        "action": "Entsorge alle verarbeiteten Süßwaren und zuckerhaltigen Getränke."
+      },
+      {
+        "type": "Todo",
+        "title": "Wochen-Einkauf",
+        "deadline": "Samstag 10:00",
+        "action": "Kaufe 2kg Brokkoli, 1kg Spinat, 2kg Hähnchen/Linsen, 30 Eier."
+      }
+    ]
+  }
+}
+
+BAD EXAMPLES - AVOID THESE AT ALL COST:
+- "Überlege dir ein Kaloriendefizit"
+- "Erstelle einen Trainingsplan"
+- "Fange an, dich gesünder zu ernähren"
+- "Suche dir ein Fitnessstudio"
+- "Motiviere dich täglich"
+- "Beobachte dein Gewicht"
+
+Logic:
+1. Specificity: Quantities (grams, reps, steps) and times (07:00, 18:00) are mandatory where possible.
+2. Logic Chain: The Todo enables the Habit. The Habit enables the Result.
+3. No Thinking: The user must be able to blindly follow the instructions.
+
+Rules:
+- The first todo must be a real concrete action.
+- The habit must be repeatable and directly goal-relevant.
+- The calendar block must be a real work block with ISO timestamps.
+- executionSteps must be the actual path to the goal, not motivational fluff.
+- Large goals need stronger depth and more concrete stages.
+- Use the user's available time realistically.
+- Prefer direct execution over abstract preparation.
+- If needed, break the path into phases.
+- Keep output compact.
+- No alternatives.
+- No review.
+- No scheduleAdjustment.
+- At most 1 routine.
+- At most 6 executionSteps.
+- At most 3 checklist items per execution step.
+
+Exact JSON shape:
+{
+  "primary": {
+    "todo": {
+      "title": "string",
+      "reason": "string",
+      "instruction": "string optional",
+      "expectedEffect": "string optional"
+    },
+    "habit": {
+      "title": "string",
+      "reason": "string",
+      "instruction": "string optional",
+      "expectedEffect": "string optional"
+    },
+    "calendar": {
+      "title": "string",
+      "start": "ISO string",
+      "end": "ISO string",
+      "reason": "string",
+      "instruction": "string optional"
+    },
+    "routines": [
+      {
+        "title": "string",
+        "reason": "string",
+        "instruction": "string optional",
+        "frequencyPerWeek": 3,
+        "durationMinutes": 30,
+        "blocks": [
+          {
+            "title": "string",
+            "start": "ISO string",
+            "end": "ISO string"
+          }
+        ]
+      }
+    ]
+  },
+  "executionSteps": [
+    {
+      "id": "step_1",
+      "order": 1,
+      "title": "string",
+      "explanation": "string",
+      "whyItMatters": "string",
+      "estimatedDays": 3,
+      "checklist": [
+        { "id": "c1", "label": "string", "done": false }
+      ],
+      "linkedTodoTitles": ["string"],
+      "linkedHabitTitles": ["string"]
+    }
+  ],
+  "planMeta": {
+    "depth": "compact|balanced|deep|full_system",
+    "difficulty": "very_easy|easy|medium|hard|very_hard",
+    "complexity": "simple|moderate|advanced|high_complexity",
+    "summary": "string"
+  }
+}
+`.trim();
+}
+
+function buildFallbackRefinement(goal: string): GoalRefinementResponse {
   return {
-    goalLabel: goal,
-    goalType: 'generic',
+    goalLabel: goal || 'Neues Ziel',
+    goalType: 'other',
     questions: [
       {
-        id: 'meaning',
-        title: 'Was meinst du mit diesem Ziel ganz konkret?',
-        type: 'text',
+        id: 'outcome',
+        title: 'Was willst du ganz konkret erreichen?',
+        type: 'long_text',
         required: true,
-        placeholder: 'Beschreibe das Ziel in deinen eigenen Worten',
+        section: 'Ziel',
+        whyAsked: 'Die KI braucht ein klares Zielbild.',
+        priority: 10,
+        placeholder: 'Beschreibe dein Ziel möglichst konkret.',
       },
       {
-        id: 'reason',
-        title: 'Warum ist dir dieses Ziel gerade wichtig?',
-        type: 'text',
+        id: 'why',
+        title: 'Warum ist dir dieses Ziel wirklich wichtig?',
+        type: 'long_text',
         required: true,
-        placeholder: 'Was soll sich dadurch in deinem Leben verändern?',
+        section: 'Motivation',
+        whyAsked: 'Das Warum beeinflusst die Planstruktur.',
+        priority: 9,
+        placeholder: 'Was verbessert sich dadurch für dich?',
       },
       {
-        id: 'obstacle',
-        title: 'Was steht dir bisher am meisten im Weg?',
+        id: 'deadline',
+        title: 'Bis wann möchtest du das ungefähr erreichen?',
+        type: 'text',
+        required: true,
+        section: 'Zeitrahmen',
+        whyAsked: 'Der Zeitrahmen bestimmt den Plan.',
+        priority: 9,
+        placeholder: 'z. B. in 3 Monaten',
+      },
+      {
+        id: 'days_per_week',
+        title: 'An wie vielen Tagen pro Woche kannst du realistisch daran arbeiten?',
         type: 'single_choice',
         required: true,
+        section: 'Kapazität',
+        whyAsked: 'Damit der Plan realistisch bleibt.',
+        priority: 8,
         options: [
-          { id: 'time', label: 'Zeit' },
-          { id: 'energy', label: 'Energie' },
-          { id: 'consistency', label: 'Konstanz' },
-          { id: 'clarity', label: 'Unklarheit' },
-          { id: 'stress', label: 'Stress' },
+          { id: '2', label: '2 Tage' },
+          { id: '3', label: '3 Tage' },
+          { id: '4', label: '4 Tage' },
+          { id: '5', label: '5 Tage' },
+          { id: '6', label: '6 Tage' },
+          { id: '7', label: '7 Tage' },
         ],
       },
       {
-        id: 'intensity',
-        title: 'Wie willst du starten?',
+        id: 'minutes_per_day',
+        title: 'Wie viele Minuten pro Tag sind realistisch?',
         type: 'single_choice',
         required: true,
+        section: 'Kapazität',
+        whyAsked: 'Damit die KI keine unrealistischen Blöcke plant.',
+        priority: 8,
         options: [
-          { id: 'gentle', label: 'Sanft' },
-          { id: 'balanced', label: 'Normal' },
-          { id: 'intense', label: 'Intensiv' },
-        ],
-      },
-      {
-        id: 'success',
-        title: 'Woran würdest du in einigen Wochen merken, dass es funktioniert?',
-        type: 'text',
-        required: false,
-        placeholder: 'Woran willst du Fortschritt erkennen?',
-      },
-      {
-        id: 'best_time',
-        title: 'Wann passt dieses Ziel am ehesten in dein Leben?',
-        type: 'single_choice',
-        required: false,
-        options: [
-          { id: 'morning', label: 'Morgens' },
-          { id: 'afternoon', label: 'Tagsüber' },
-          { id: 'evening', label: 'Abends' },
-          { id: 'mixed', label: 'Unterschiedlich' },
+          { id: '15', label: '15 Minuten' },
+          { id: '30', label: '30 Minuten' },
+          { id: '45', label: '45 Minuten' },
+          { id: '60', label: '60 Minuten' },
+          { id: '90', label: '90 Minuten' },
         ],
       },
     ],
+    analysis: {
+      category: 'other',
+      complexity: 'moderate',
+      difficulty: 'medium',
+      rationale: ['Fallback-Fragen wurden verwendet, weil das Modell kein sauberes JSON geliefert hat.'],
+      missingInformation: ['genauer Zielzustand', 'Zeitrahmen', 'realistische Kapazität'],
+      recommendedQuestionCount: 5,
+    },
   };
 }
 
-function pickRoutineBlocks(
-  freeSlots: FreeSlot[],
-  desiredCount: number,
-  blockMinutes: number
-) {
-  const picked: PlannerRoutineBlock[] = [];
-  const usedDays = new Set<string>();
+function validateRefinement(data: any, fallbackGoal: string): GoalRefinementResponse {
+  const rawQuestions = ensureArray<any>(data?.questions);
 
-  for (const slot of freeSlots) {
-    if (picked.length >= desiredCount) break;
+  const questions = rawQuestions
+    .map((q, index) => {
+      const type = ['text', 'single_choice', 'multi_choice', 'long_text'].includes(q?.type)
+        ? q.type
+        : 'text';
 
-    const start = new Date(slot.start);
-    const end = new Date(slot.end);
-    const slotMinutes = Math.max(
-      0,
-      Math.round((end.getTime() - start.getTime()) / 60000)
-    );
+      const normalized = {
+        id: safeString(q?.id, `q_${index + 1}`),
+        title: safeString(q?.title, '').trim(),
+        type,
+        required: q?.required !== false,
+        section: safeString(q?.section, 'Allgemein'),
+        whyAsked: safeString(q?.whyAsked, ''),
+        priority: safeNumber(q?.priority, 1),
+        placeholder: q?.placeholder ? safeString(q.placeholder) : undefined,
+        helpText: q?.helpText ? safeString(q.helpText) : undefined,
+        options: Array.isArray(q?.options)
+          ? q.options
+              .map((opt: any, optIndex: number) => ({
+                id: safeString(opt?.id, `opt_${index + 1}_${optIndex + 1}`),
+                label: safeString(opt?.label, '').trim(),
+              }))
+              .filter((opt: { id: string; label: string }) => opt.label.length > 0)
+          : undefined,
+      };
 
-    if (slotMinutes < blockMinutes) continue;
+      if (!normalized.title) return null;
 
-    const dayKey = slot.start.slice(0, 10);
-    if (usedDays.has(dayKey)) continue;
+      if (
+        (type === 'single_choice' || type === 'multi_choice') &&
+        (!normalized.options || normalized.options.length === 0)
+      ) {
+        return {
+          ...normalized,
+          type: 'text' as const,
+          options: undefined,
+        };
+      }
 
-    const blockEnd = new Date(start.getTime() + blockMinutes * 60000);
+      return normalized;
+    })
+    .filter(Boolean) as GoalQuestion[];
 
-    picked.push({
-      title: 'Routine',
-      start: start.toISOString(),
-      end: blockEnd.toISOString(),
-    });
-
-    usedDays.add(dayKey);
+  if (!questions.length) {
+    return buildFallbackRefinement(fallbackGoal);
   }
 
-  return picked;
+  return {
+    goalLabel: safeString(data?.goalLabel, fallbackGoal || 'Neues Ziel'),
+    goalType: safeString(data?.goalType, safeString(data?.analysis?.category, 'other')),
+    questions,
+    analysis: data?.analysis && typeof data.analysis === 'object'
+      ? {
+          category: safeString(data.analysis.category, 'other'),
+          complexity: safeString(data.analysis.complexity, 'moderate'),
+          difficulty: safeString(data.analysis.difficulty, 'medium'),
+          rationale: ensureArray<string>(data.analysis.rationale),
+          missingInformation: ensureArray<string>(data.analysis.missingInformation),
+          recommendedQuestionCount: safeNumber(data.analysis.recommendedQuestionCount, questions.length),
+        }
+      : {
+          category: 'other',
+          complexity: 'moderate',
+          difficulty: 'medium',
+          rationale: [],
+          missingInformation: [],
+          recommendedQuestionCount: questions.length,
+        },
+  };
 }
 
-function buildFallbackPlanner(body: PlannerRequest): PlannerBundle {
-  const goal = topGoal(body.goals);
-  const slot = body.freeSlots?.[0];
-
-  const start = slot?.start ?? new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
-  const end =
-    slot?.end ??
-    new Date(Date.now() + 24 * 60 * 60 * 1000 + 30 * 60 * 1000).toISOString();
-
-  const routineBlocks = pickRoutineBlocks(body.freeSlots ?? [], 2, 30).map((b) => ({
-    ...b,
-    title: `${goal} Routine`,
-  }));
+function buildFallbackPlanner(goalLabel = 'Dein Ziel'): PlannerBundle {
+  const now = new Date();
+  const start = new Date(now.getTime() + 60 * 60 * 1000);
+  const end = new Date(start.getTime() + 45 * 60 * 1000);
 
   return {
     primary: {
       todo: {
-        title: `Setze heute eine klare Anweisung für "${goal}" um`,
-        reason: 'Eine konkrete Ausführungsanweisung ist wirksamer als ein vager Vorsatz.',
-        instruction: `Lege den kleinsten realen Schritt für "${goal}" noch heute fest und führe ihn aus.`,
-        expectedEffect: 'Der Einstieg wird leichter und der Widerstand sinkt.',
+        title: 'Proteinreiche Lebensmittel einkaufen',
+        reason: `Damit du "${goalLabel}" direkt praktisch umsetzen kannst.`,
+        instruction: 'Kaufe heute konkrete Lebensmittel für 3 einfache proteinreiche Mahlzeiten.',
       },
       habit: {
-        title: `2 Minuten täglich für "${goal}" reservieren`,
-        reason: 'Ein sehr kleines Habit erhöht die Chance auf echte Konstanz.',
-        instruction: `Verknüpfe das Habit mit einem festen Auslöser im Alltag.`,
-        expectedEffect: 'Wiederholung entsteht, ohne dass es überfordernd wirkt.',
+        title: 'Jeden Tag proteinreich frühstücken',
+        reason: 'Das macht Sättigung und Struktur beim Abnehmen deutlich einfacher.',
+        instruction: 'Starte jeden Morgen mit einer klaren eiweißreichen Mahlzeit.',
       },
       calendar: {
-        title: goal,
-        start,
-        end,
-        reason: 'Ein fixer Slot schafft Verbindlichkeit statt nur guter Absicht.',
-        instruction: 'Nutze diesen Block nur für dieses Ziel und starte ohne Ablenkung.',
+        title: 'Ganzkörpertraining',
+        start: start.toISOString(),
+        end: end.toISOString(),
+        reason: 'Ein fester Trainingsblock ist ein echter Fortschrittsschritt.',
+        instruction: '3 Runden mit Kniebeugen, Liegestützen, Ausfallschritten und Rudern.',
       },
-      routines:
-        routineBlocks.length > 0
-          ? [
-              {
-                title: `${goal} Routine`,
-                reason:
-                  'Mehrere feste Wiederholungen pro Woche erhöhen die Chance, dass das Ziel wirklich Teil des Alltags wird.',
-                instruction:
-                  'Behandle diese Blöcke wie feste Vereinbarungen und verschiebe sie nur bewusst.',
-                frequencyPerWeek: routineBlocks.length,
-                durationMinutes: 30,
-                reviewAfterDays: 14,
-                blocks: routineBlocks,
-              },
-            ]
-          : [],
-      scheduleAdjustment: {
-        title: `Reserviere feste Wochenzeit für "${goal}"`,
-        reason:
-          'Das Ziel wirkt wichtig genug, um mehr als spontane Restzeit zu bekommen.',
-        instruction:
-          'Plane bewusst wiederkehrende Zeit statt auf Motivation in Lücken zu hoffen.',
-      },
-      review: {
-        reviewAfterDays: 7,
-        questions: [
-          'Hat dir dieser Plan tatsächlich geholfen?',
-          'War die Intensität passend oder zu hoch?',
-          'Welcher Teil hat die größte Wirkung gezeigt?',
-        ],
-      },
+      routines: [
+        {
+          title: 'Täglicher Spaziergang',
+          reason: 'Mehr Bewegung im Alltag erhöht den Kalorienverbrauch ohne Überforderung.',
+          instruction: '30 Minuten zügig gehen.',
+          frequencyPerWeek: 7,
+          durationMinutes: 30,
+          blocks: [
+            {
+              title: 'Spaziergang',
+              start: new Date(start.getTime() + 10 * 60 * 60 * 1000).toISOString(),
+              end: new Date(start.getTime() + 10 * 60 * 60 * 1000 + 30 * 60 * 1000).toISOString(),
+            },
+          ],
+        },
+      ],
     },
-    alternatives: [
+    alternatives: [],
+    executionSteps: [
       {
-        label: 'Ungewöhnlich',
-        todo: {
-          title: `Verändere die Umgebung für "${goal}" statt nur deinen Willen`,
-          reason:
-            'Oft liegt der größte Hebel nicht im Willen, sondern in der Struktur und Umgebung.',
-          instruction:
-            'Ordne deinen Alltag so um, dass die gewünschte Handlung leichter und die alte Reibung schwerer wird.',
-          expectedEffect: 'Weniger innere Reibung und mehr automatische Umsetzung.',
-        },
-        habit: {
-          title: `Nutze ein Mini-Ritual als Startsignal für "${goal}"`,
-          reason: 'Ein Ritual senkt die mentale Einstiegsschwelle.',
-          instruction:
-            'Führe immer denselben kleinen Startschritt direkt vor der eigentlichen Handlung aus.',
-          expectedEffect: 'Der Übergang vom Denken ins Handeln wird leichter.',
-        },
-        calendar: {
-          title: `${goal} Reset`,
-          start,
-          end,
-          reason: 'Ein bewusster Startblock kann wirksamer sein als lose Motivation.',
-          instruction:
-            'Nutze diesen Termin nicht zum Perfektionismus, sondern für einen klaren Neustart.',
-        },
+        id: 'step_1',
+        order: 1,
+        title: 'Ernährung sofort sauber stellen',
+        explanation: 'Starte direkt mit konkreten Mahlzeiten statt nur über Ernährung nachzudenken.',
+        whyItMatters: 'Abnehmen scheitert oft nicht am Wissen, sondern an fehlender Umsetzung im Alltag.',
+        estimatedDays: 3,
+        checklist: [
+          { id: 'c1', label: 'Proteinreiche Lebensmittel einkaufen', done: false },
+          { id: 'c2', label: '3 einfache Mahlzeiten für die nächsten Tage festlegen', done: false },
+        ],
+        linkedTodoTitles: ['Proteinreiche Lebensmittel einkaufen'],
+        linkedHabitTitles: ['Jeden Tag proteinreich frühstücken'],
+      },
+      {
+        id: 'step_2',
+        order: 2,
+        title: 'Festen Bewegungsrhythmus starten',
+        explanation: 'Setze feste Trainingseinheiten und einfache tägliche Bewegung um.',
+        whyItMatters: 'Konstanz ist beim Abnehmen stärker als einzelne motivierte Tage.',
+        estimatedDays: 7,
+        checklist: [
+          { id: 'c3', label: 'Erstes Ganzkörpertraining absolvieren', done: false },
+          { id: 'c4', label: 'An 5 Tagen spazieren gehen', done: false },
+        ],
+        linkedTodoTitles: [],
+        linkedHabitTitles: ['Täglicher Spaziergang'],
+      },
+      {
+        id: 'step_3',
+        order: 3,
+        title: 'Erste Woche stabil durchziehen',
+        explanation: 'Wiederhole Ernährung und Bewegung ohne ständig alles zu ändern.',
+        whyItMatters: 'Der Körper reagiert auf Wiederholung, nicht auf perfekte Einzelaktionen.',
+        estimatedDays: 7,
+        checklist: [
+          { id: 'c5', label: '7 Tage Frühstück durchziehen', done: false },
+          { id: 'c6', label: '2 Trainings absolvieren', done: false },
+        ],
+        linkedTodoTitles: [],
+        linkedHabitTitles: ['Jeden Tag proteinreich frühstücken'],
       },
     ],
+    planMeta: {
+      depth: 'balanced',
+      difficulty: 'medium',
+      complexity: 'moderate',
+      summary: 'Fallback-Plan wurde verwendet, weil der Modell-Output unvollständig war.',
+    },
   };
 }
 
-function buildGoalRefinementPrompt() {
-  return [
-    'Du erzeugst hochqualitative Rückfragen für eine Zielklärungs-App.',
-    'Die Fragen sollen sich an das konkrete Ziel und an das bisherige Nutzerprofil anpassen.',
-    'Das Ziel ist, ein grobes Ziel in ein tiefes, persönliches und planbares Ziel zu verwandeln.',
-    'Die Fragen dürfen emotionale, praktische, identitätsbezogene und strategische Ebenen abdecken.',
-    'Erstelle 6 bis 10 wirklich gute Fragen.',
-    'Nutze eine Mischung aus text, single_choice und multi_choice.',
-    'Die Fragen sollen klug, attraktiv und relevant wirken.',
-    'Vermeide langweilige Standardfragen.',
-    'Antworte ausschließlich als JSON.',
-    'Format:',
-    '{',
-    '  "goalLabel": "string",',
-    '  "goalType": "string",',
-    '  "questions": [',
-    '    {',
-    '      "id": "string",',
-    '      "title": "string",',
-    '      "type": "text | single_choice | multi_choice",',
-    '      "required": true,',
-    '      "placeholder": "string optional",',
-    '      "options": [{"id":"string","label":"string"}]',
-    '    }',
-    '  ]',
-    '}',
-    'Keine Analyse. Kein Markdown. Kein Text außerhalb des JSON.',
-  ].join('\n');
-}
+function validatePlanner(data: any, fallbackGoalLabel = 'Dein Ziel'): PlannerBundle {
+  const primaryTodoTitle = safeString(data?.primary?.todo?.title);
+  const primaryHabitTitle = safeString(data?.primary?.habit?.title);
+  const primaryCalendarTitle = safeString(data?.primary?.calendar?.title);
 
-function buildPlannerPrompt() {
-  return [
-    'Du bist eine außergewöhnlich kreative, psychologisch kluge Planungs-KI.',
-    'Du bekommst:',
-    '- Ziel',
-    '- frühere Ziele',
-    '- Antworten auf vertiefende Rückfragen',
-    '- Produktivitätssignale',
-    '- Nutzerprofil',
-    '- freie Kalender-Slots',
-    '',
-    'Erstelle kein banales Standard-Ergebnis.',
-    'Vermeide generische Tipps wie "mehr spazieren", "einfach öfter trainieren", "mehr schlafen", außer sie sind extrem personalisiert.',
-    '',
-    'Antworte mit einem Bundle aus:',
-    '- primary: Hauptplan',
-    '- alternatives: 2 alternative Richtungen',
-    '- routines: 0 bis 2 Routinen mit mehreren Terminen pro Woche',
-    '- optional scheduleAdjustment: wenn im Zeitplan etwas klar fehlt',
-    '- review: Nach wie vielen Tagen Wirkung geprüft werden soll und welche Fragen dann gestellt werden sollen',
-    '',
-    'Denke in diesen Richtungen:',
-    '- behavior design',
-    '- friction reduction',
-    '- environmental design',
-    '- identity reinforcement',
-    '- emotional regulation',
-    '- recovery strategy',
-    '',
-    'Regeln:',
-    '- Todo = konkret, originell, nicht banal, eher als klare Anweisung formuliert.',
-    '- Habit = klein, aber intelligent und spürbar.',
-    '- Calendar = sinnvoller freier Slot ab morgen, niemals in der Vergangenheit.',
-    '- Routines dürfen mehrfach pro Woche geplant werden, z.B. Training 3x/Woche.',
-    '- Nutze nur freie Slots aus freeSlots.',
-    '- scheduleAdjustment soll einen Zeitplan-Hinweis geben, wenn das Ziel eigentlich schon Kalenderraum bräuchte.',
-    '- Jede Komponente braucht eine klare reason.',
-    '- Gib nach Möglichkeit instruction und expectedEffect zurück.',
-    '- Mindestens eine Alternative soll ungewöhnlich und überraschend sein, aber realistisch.',
-    '',
-    'Antworte ausschließlich als JSON.',
-    'Format:',
-    '{',
-    '  "primary": {',
-    '    "todo": { "title": "string", "reason": "string", "instruction": "string", "expectedEffect": "string" },',
-    '    "habit": { "title": "string", "reason": "string", "instruction": "string", "expectedEffect": "string" },',
-    '    "calendar": { "title": "string", "start": "ISO", "end": "ISO", "reason": "string", "instruction": "string" },',
-    '    "routines": [',
-    '      {',
-    '        "title": "string",',
-    '        "reason": "string",',
-    '        "instruction": "string",',
-    '        "frequencyPerWeek": 3,',
-    '        "durationMinutes": 35,',
-    '        "reviewAfterDays": 14,',
-    '        "blocks": [{ "title": "string", "start": "ISO", "end": "ISO" }]',
-    '      }',
-    '    ],',
-    '    "scheduleAdjustment": { "title": "string", "reason": "string", "instruction": "string", "expectedEffect": "string" },',
-    '    "review": { "reviewAfterDays": 7, "questions": ["string"] }',
-    '  },',
-    '  "alternatives": [',
-    '    {',
-    '      "label": "string",',
-    '      "todo": { "title": "string", "reason": "string", "instruction": "string", "expectedEffect": "string" },',
-    '      "habit": { "title": "string", "reason": "string", "instruction": "string", "expectedEffect": "string" },',
-    '      "calendar": { "title": "string", "start": "ISO", "end": "ISO", "reason": "string", "instruction": "string" }',
-    '    }',
-    '  ]',
-    '}',
-    'Keine Analyse. Kein Markdown. Kein Text außerhalb des JSON.',
-  ].join('\n');
-}
+  if (!primaryTodoTitle || !primaryHabitTitle || !primaryCalendarTitle) {
+    return buildFallbackPlanner(fallbackGoalLabel);
+  }
 
-async function callGroqGoalRefinement(
-  env: Env,
-  body: GoalRefineRequest
-): Promise<GoalRefinementResponse> {
-  const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${env.GROQ_API_KEY}`,
-      'Content-Type': 'application/json',
+  const routines = ensureArray<any>(data?.primary?.routines)
+    .slice(0, 1)
+    .map((routine, index) => ({
+      title: safeString(routine?.title, `Routine ${index + 1}`),
+      reason: safeString(routine?.reason, 'Wiederkehrende Routine.'),
+      instruction: safeString(routine?.instruction, '') || undefined,
+      frequencyPerWeek: Math.max(1, safeNumber(routine?.frequencyPerWeek, 1)),
+      durationMinutes: routine?.durationMinutes
+        ? safeNumber(routine.durationMinutes, 20)
+        : undefined,
+      blocks: ensureArray<any>(routine?.blocks).slice(0, 3).map((block, blockIndex) => ({
+        title: safeString(block?.title, `Block ${blockIndex + 1}`),
+        start: safeString(block?.start, new Date().toISOString()),
+        end: safeString(
+          block?.end,
+          new Date(Date.now() + 30 * 60 * 1000).toISOString(),
+        ),
+      })),
+    }));
+
+  const executionSteps = ensureArray<any>(data?.executionSteps)
+    .slice(0, 6)
+    .map((step, index) => ({
+      id: safeString(step?.id, `step_${index + 1}`),
+      order: Math.max(1, safeNumber(step?.order, index + 1)),
+      title: safeString(step?.title, `Schritt ${index + 1}`),
+      explanation: safeString(step?.explanation, ''),
+      whyItMatters: safeString(step?.whyItMatters, ''),
+      estimatedDays: step?.estimatedDays ? safeNumber(step.estimatedDays, 1) : undefined,
+      checklist: ensureArray<any>(step?.checklist).slice(0, 3).map((item, itemIndex) => ({
+        id: safeString(item?.id, `check_${index + 1}_${itemIndex + 1}`),
+        label: safeString(item?.label, `Aufgabe ${itemIndex + 1}`),
+        done: item?.done === true,
+      })),
+      linkedTodoTitles: ensureArray<string>(step?.linkedTodoTitles),
+      linkedHabitTitles: ensureArray<string>(step?.linkedHabitTitles),
+    }));
+
+  if (!executionSteps.length) {
+    return buildFallbackPlanner(fallbackGoalLabel);
+  }
+
+  return {
+    primary: {
+      todo: {
+        title: primaryTodoTitle,
+        reason: safeString(data?.primary?.todo?.reason, 'Passender nächster Schritt.'),
+        instruction: safeString(data?.primary?.todo?.instruction, '') || undefined,
+        expectedEffect: safeString(data?.primary?.todo?.expectedEffect, '') || undefined,
+      },
+      habit: {
+        title: primaryHabitTitle,
+        reason: safeString(data?.primary?.habit?.reason, 'Passende Gewohnheit.'),
+        instruction: safeString(data?.primary?.habit?.instruction, '') || undefined,
+        expectedEffect: safeString(data?.primary?.habit?.expectedEffect, '') || undefined,
+      },
+      calendar: {
+        title: primaryCalendarTitle,
+        start: safeString(data?.primary?.calendar?.start, new Date().toISOString()),
+        end: safeString(
+          data?.primary?.calendar?.end,
+          new Date(Date.now() + 45 * 60 * 1000).toISOString(),
+        ),
+        reason: safeString(data?.primary?.calendar?.reason, 'Passender Fokusblock.'),
+        instruction: safeString(data?.primary?.calendar?.instruction, '') || undefined,
+      },
+      routines,
     },
-    body: JSON.stringify({
-      model: 'llama-3.3-70b-versatile',
-      temperature: 0.5,
-      max_completion_tokens: 900,
-      response_format: { type: 'json_object' },
-      messages: [
-        {
-          role: 'system',
-          content: buildGoalRefinementPrompt(),
-        },
-        {
-          role: 'user',
-          content: JSON.stringify(body),
-        },
-      ],
-    }),
+    alternatives: [],
+    executionSteps,
+    planMeta: {
+      depth: ['compact', 'balanced', 'deep', 'full_system'].includes(data?.planMeta?.depth)
+        ? (data.planMeta.depth as PlanDepth)
+        : 'balanced',
+      difficulty: safeString(data?.planMeta?.difficulty, 'medium'),
+      complexity: safeString(data?.planMeta?.complexity, 'moderate'),
+      summary: safeString(data?.planMeta?.summary, 'Plan erfolgreich erzeugt.'),
+    },
+  };
+}
+
+async function handleRefine(request: Request, env: Env) {
+  const body: any = await request.json().catch(() => null);
+  const goal = safeString(body?.goal).trim();
+
+  if (!goal) {
+    return errorResponse('Goal is required.');
+  }
+
+  const payload = {
+    goal,
+    profile: body?.profile ?? null,
+    pastGoals: body?.pastGoals ?? [],
+    existingAnswers: body?.existingAnswers ?? {},
+  };
+
+  const model = env.GROQ_MODEL_REFINE || 'openai/gpt-oss-20b';
+
+  const rawContent = await callGroqRaw({
+    env,
+    model,
+    system: refinementSystemPrompt(),
+    user: JSON.stringify(payload),
+    temperature: 0.2,
+    maxCompletionTokens: 1600,
+    forceJson: true,
   });
 
-  const raw = await res.text();
+  console.log('RAW REFINE CONTENT:\n', rawContent);
 
-  if (!res.ok) {
-    throw new Error(`Groq refine error ${res.status}: ${raw}`);
+  const parsed = parseModelJsonLoose<any>(rawContent);
+
+  if (!parsed) {
+    console.log('REFINE FALLBACK USED');
+    return jsonResponse(buildFallbackRefinement(goal));
   }
 
-  const parsed = JSON.parse(raw);
-  const content = parsed?.choices?.[0]?.message?.content;
-
-  if (typeof content !== 'string') {
-    throw new Error('Groq refine content missing');
-  }
-
-  const jsonObj = extractJsonObject(content);
-  const normalized = normalizeGoalRefinement(jsonObj);
-
-  if (!normalized) {
-    throw new Error(`Invalid goal refinement JSON: ${content}`);
-  }
-
-  return normalized;
+  return jsonResponse(validateRefinement(parsed, goal));
 }
 
-async function callGroqPlanner(env: Env, body: PlannerRequest): Promise<PlannerBundle> {
-  const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${env.GROQ_API_KEY}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      model: 'llama-3.3-70b-versatile',
-      temperature: 0.45,
-      max_completion_tokens: 1400,
-      response_format: { type: 'json_object' },
-      messages: [
-        {
-          role: 'system',
-          content: buildPlannerPrompt(),
-        },
-        {
-          role: 'user',
-          content: JSON.stringify({
-            goal: topGoal(body.goals),
-            goals: body.goals.map((g) => g.title),
-            answers: body.answers ?? {},
-            signals: body.signals,
-            profile: body.profile,
-            userPlanningProfile: body.userPlanningProfile ?? null,
-            freeSlots: body.freeSlots ?? [],
-          }),
-        },
-      ],
-    }),
+async function handleSuggest(request: Request, env: Env) {
+  const body: any = await request.json().catch(() => null);
+  const model = env.GROQ_MODEL_PLAN || 'openai/gpt-oss-20b';
+
+  const rawContent = await callGroqRaw({
+    env,
+    model,
+    system: plannerSystemPrompt(),
+    user: JSON.stringify(body ?? {}),
+    temperature: 0.15,
+    maxCompletionTokens: 3200,
+    forceJson: true,
   });
 
-  const raw = await res.text();
+  console.log('RAW PLAN CONTENT:\n', rawContent);
 
-  if (!res.ok) {
-    throw new Error(`Groq planner error ${res.status}: ${raw}`);
+  const parsed = parseModelJsonLoose<any>(rawContent);
+
+  if (!parsed) {
+    console.log('PLAN FALLBACK USED');
+    return jsonResponse(buildFallbackPlanner('Dein Ziel'));
   }
 
-  const parsed = JSON.parse(raw);
-  const content = parsed?.choices?.[0]?.message?.content;
+  const goalLabel =
+    safeString(body?.answers?.outcome) ||
+    safeString(body?.goals?.[0]?.title) ||
+    'Dein Ziel';
 
-  if (typeof content !== 'string') {
-    throw new Error('Groq planner content missing');
-  }
-
-  const jsonObj = extractJsonObject(content);
-  const normalized = normalizePlannerBundle(jsonObj);
-
-  if (!normalized) {
-    throw new Error(`Invalid planner JSON: ${content}`);
-  }
-
-  return normalized;
+  return jsonResponse(validatePlanner(parsed, goalLabel));
 }
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
-    if (request.method === 'OPTIONS') {
-      return json({}, { status: 200 });
-    }
-
     const url = new URL(request.url);
 
-    if (request.method === 'GET' && url.pathname === '/health') {
-      return json({ ok: true }, { status: 200 });
+    if (request.method === 'OPTIONS') {
+      return jsonResponse({}, 204);
     }
 
-    if (request.method === 'POST' && url.pathname === '/goal/refine') {
-      let body: GoalRefineRequest;
-
-      try {
-        body = (await request.json()) as GoalRefineRequest;
-      } catch (error) {
-        return json(
-          {
-            error: 'Invalid request body',
-            details: error instanceof Error ? error.message : 'unknown',
-          },
-          { status: 400 }
-        );
-      }
-
-      try {
-        const result = await callGroqGoalRefinement(env, body);
-        return json(result, { status: 200 });
-      } catch (error) {
-        console.log('Groq goal refinement failed, using fallback:', error);
-        return json(buildFallbackGoalRefinement(body), { status: 200 });
+    if (env.APP_SHARED_SECRET) {
+      const header = request.headers.get('X-App-Secret');
+      if (header !== env.APP_SHARED_SECRET) {
+        return errorResponse('Unauthorized', 401);
       }
     }
 
-    if (request.method === 'POST' && url.pathname === '/planner/suggest') {
-      let body: PlannerRequest;
-
-      try {
-        body = (await request.json()) as PlannerRequest;
-      } catch (error) {
-        return json(
-          {
-            error: 'Invalid request body',
-            details: error instanceof Error ? error.message : 'unknown',
-          },
-          { status: 400 }
-        );
+    try {
+      if (url.pathname === '/goal/refine') {
+        if (request.method !== 'POST') return errorResponse('Method not allowed', 405);
+        return await handleRefine(request, env);
       }
 
-      try {
-        const result = await callGroqPlanner(env, body);
-        return json(result, { status: 200 });
-      } catch (error) {
-        console.log('Groq planner failed, using fallback:', error);
-        return json(buildFallbackPlanner(body), { status: 200 });
+      if (url.pathname === '/planner/suggest') {
+        if (request.method !== 'POST') return errorResponse('Method not allowed', 405);
+        return await handleSuggest(request, env);
       }
+
+      if (url.pathname === '/health') {
+        return jsonResponse({ ok: true });
+      }
+
+      return errorResponse('Not found', 404);
+    } catch (error: any) {
+      return errorResponse('Worker error', 500, {
+        detail: error instanceof Error ? error.message : String(error),
+      });
     }
-
-    return json({ error: 'Not found' }, { status: 404 });
   },
 };

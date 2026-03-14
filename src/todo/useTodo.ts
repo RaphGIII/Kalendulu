@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useFocusEffect } from '@react-navigation/native';
-import { Category, Task, TodoState } from './types';
+
+import type { Category, Task, TaskPriority, TodoState } from './types';
 import { cancelReminder, scheduleTaskReminder } from './notifications';
 
 const TODO_STORAGE_KEY = 'kalendulu:todo:v1';
@@ -12,27 +13,38 @@ function uid() {
 
 const DEFAULT_CATEGORIES: Category[] = [
   { id: 'business', name: 'Business', color: '#D4AF37' },
-  { id: 'personal', name: 'Personal', color: '#C0C0C0' },
+  { id: 'personal', name: 'Persönlich', color: '#C0C0C0' },
+  { id: 'health', name: 'Gesundheit', color: '#5BC0BE' },
 ];
 
 const DEFAULT_TASKS: Task[] = [
   {
     id: uid(),
-    title: 'Daily meeting with team',
-    categoryId: 'business',
+    title: 'Wichtigsten Schritt für heute festlegen',
+    categoryId: 'personal',
     done: false,
     createdAt: Date.now() - 100000,
     reminderEnabled: false,
     reminderId: null,
+    doneAt: null,
+    note: 'Nicht zu groß planen. Nur den klarsten nächsten Schritt wählen.',
+    subcategory: 'Fokus',
+    linkedGoalId: null,
+    priority: 'high',
   },
   {
     id: uid(),
-    title: 'Pay for rent',
+    title: '10 Minuten Ordnung schaffen',
     categoryId: 'personal',
     done: true,
     createdAt: Date.now() - 90000,
     reminderEnabled: false,
     reminderId: null,
+    doneAt: Date.now() - 10000,
+    note: '',
+    subcategory: 'Umfeld',
+    linkedGoalId: null,
+    priority: 'low',
   },
 ];
 
@@ -42,9 +54,44 @@ const DEFAULT_STATE: TodoState = {
   tasks: DEFAULT_TASKS,
 };
 
+type AddTaskInput = {
+  title: string;
+  categoryId: string;
+  note?: string;
+  subcategory?: string | null;
+  linkedGoalId?: string | null;
+  priority?: TaskPriority;
+};
+
+function normalizeTask(task: Task): Task {
+  return {
+    ...task,
+    reminderEnabled: task.reminderEnabled ?? false,
+    reminderId: task.reminderId ?? null,
+    doneAt: task.doneAt ?? (task.done ? Date.now() : null),
+    note: task.note ?? '',
+    subcategory: task.subcategory ?? null,
+    linkedGoalId: task.linkedGoalId ?? null,
+    priority: task.priority ?? 'medium',
+  };
+}
+
+function normalizeState(parsed: TodoState): TodoState {
+  return {
+    name: parsed?.name ?? DEFAULT_STATE.name,
+    categories: Array.isArray(parsed?.categories) && parsed.categories.length > 0
+      ? parsed.categories
+      : DEFAULT_CATEGORIES,
+    tasks: Array.isArray(parsed?.tasks)
+      ? parsed.tasks.map(normalizeTask)
+      : [],
+  };
+}
+
 export function useTodo() {
   const [state, setState] = useState<TodoState>(DEFAULT_STATE);
   const [activeCategoryId, setActiveCategoryId] = useState<string | null>(null);
+  const [showCompleted, setShowCompleted] = useState(false);
   const [hydrated, setHydrated] = useState(false);
 
   const loadState = useCallback(async () => {
@@ -52,14 +99,13 @@ export function useTodo() {
       const raw = await AsyncStorage.getItem(TODO_STORAGE_KEY);
       if (raw) {
         const parsed = JSON.parse(raw) as TodoState;
-        if (parsed?.tasks && parsed?.categories) {
-          setState(parsed);
-          return;
-        }
+        setState(normalizeState(parsed));
+        return;
       }
       setState(DEFAULT_STATE);
     } catch (e) {
       console.log('Failed to load todo state', e);
+      setState(DEFAULT_STATE);
     } finally {
       setHydrated(true);
     }
@@ -72,120 +118,252 @@ export function useTodo() {
   useFocusEffect(
     useCallback(() => {
       loadState();
-    }, [loadState])
+    }, [loadState]),
   );
 
   useEffect(() => {
     if (!hydrated) return;
     AsyncStorage.setItem(TODO_STORAGE_KEY, JSON.stringify(state)).catch((e) =>
-      console.log('Failed to save todo state', e)
+      console.log('Failed to save todo state', e),
     );
   }, [state, hydrated]);
 
   const categoriesWithCounts = useMemo(() => {
-    return state.categories.map((c) => {
-      const count = state.tasks.filter((t) => !t.done && t.categoryId === c.id).length;
-      return { ...c, count };
+    return state.categories.map((category) => {
+      const openCount = state.tasks.filter(
+        (task) => !task.done && task.categoryId === category.id,
+      ).length;
+
+      const completedCount = state.tasks.filter(
+        (task) => task.done && task.categoryId === category.id,
+      ).length;
+
+      return {
+        ...category,
+        count: openCount,
+        completedCount,
+      };
     });
   }, [state.categories, state.tasks]);
 
-  const filteredTasks = useMemo(() => {
+  const openTasks = useMemo(() => {
     const base = activeCategoryId
-      ? state.tasks.filter((t) => t.categoryId === activeCategoryId)
+      ? state.tasks.filter((task) => task.categoryId === activeCategoryId)
       : state.tasks;
 
-    return [...base].sort((a, b) => b.createdAt - a.createdAt);
+    return base
+      .filter((task) => !task.done)
+      .sort((a, b) => b.createdAt - a.createdAt);
   }, [state.tasks, activeCategoryId]);
 
-  const addTask = (title: string, categoryId: string) => {
-    const categoryExists = state.categories.some((c) => c.id === categoryId);
+  const completedTasks = useMemo(() => {
+    const base = activeCategoryId
+      ? state.tasks.filter((task) => task.categoryId === activeCategoryId)
+      : state.tasks;
+
+    return base
+      .filter((task) => task.done)
+      .sort((a, b) => (b.doneAt ?? 0) - (a.doneAt ?? 0));
+  }, [state.tasks, activeCategoryId]);
+
+  const filteredTasks = showCompleted ? [...openTasks, ...completedTasks] : openTasks;
+
+  const addTask = ({
+    title,
+    categoryId,
+    note = '',
+    subcategory = null,
+    linkedGoalId = null,
+    priority = 'medium',
+  }: AddTaskInput) => {
+    const taskTitle = title.trim();
+    if (!taskTitle) return;
+
+    const categoryExists = state.categories.some((category) => category.id === categoryId);
     const fallbackCategoryId = state.categories[0]?.id ?? 'business';
 
-    const t: Task = {
+    const nextTask: Task = {
       id: uid(),
-      title,
+      title: taskTitle,
       categoryId: categoryExists ? categoryId : fallbackCategoryId,
       done: false,
       createdAt: Date.now(),
       reminderEnabled: false,
       reminderId: null,
+      doneAt: null,
+      note: note.trim(),
+      subcategory: subcategory?.trim() || null,
+      linkedGoalId,
+      priority,
     };
 
-    setState((s) => ({ ...s, tasks: [t, ...s.tasks] }));
+    setState((current) => ({
+      ...current,
+      tasks: [nextTask, ...current.tasks],
+    }));
+  };
+
+  const updateTask = (
+    taskId: string,
+    updates: Partial<Pick<Task, 'title' | 'note' | 'subcategory' | 'priority' | 'categoryId'>>,
+  ) => {
+    setState((current) => ({
+      ...current,
+      tasks: current.tasks.map((task) => {
+        if (task.id !== taskId) return task;
+
+        return {
+          ...task,
+          ...updates,
+          title: updates.title !== undefined ? updates.title.trim() : task.title,
+          note: updates.note !== undefined ? updates.note.trim() : task.note,
+          subcategory:
+            updates.subcategory !== undefined
+              ? updates.subcategory?.trim() || null
+              : task.subcategory,
+        };
+      }),
+    }));
   };
 
   const toggleTaskDone = async (taskId: string) => {
-    const task = state.tasks.find((t) => t.id === taskId);
+    const task = state.tasks.find((item) => item.id === taskId);
     if (!task) return;
 
-    if (task.reminderId) {
+    const nextDone = !task.done;
+
+    if (nextDone && task.reminderId) {
       await cancelReminder(task.reminderId);
     }
 
-    setState((s) => ({
-      ...s,
-      tasks: s.tasks.filter((t) => t.id !== taskId),
+    setState((current) => ({
+      ...current,
+      tasks: current.tasks.map((item) => {
+        if (item.id !== taskId) return item;
+
+        return {
+          ...item,
+          done: nextDone,
+          doneAt: nextDone ? Date.now() : null,
+          reminderEnabled: nextDone ? false : item.reminderEnabled,
+          reminderId: nextDone ? null : item.reminderId,
+        };
+      }),
+    }));
+  };
+
+  const deleteTask = async (taskId: string) => {
+    const task = state.tasks.find((item) => item.id === taskId);
+    if (task?.reminderId) {
+      await cancelReminder(task.reminderId);
+    }
+
+    setState((current) => ({
+      ...current,
+      tasks: current.tasks.filter((item) => item.id !== taskId),
+    }));
+  };
+
+  const clearCompletedTasks = async () => {
+    const completed = state.tasks.filter((task) => task.done && task.reminderId);
+
+    for (const task of completed) {
+      if (task.reminderId) {
+        await cancelReminder(task.reminderId);
+      }
+    }
+
+    setState((current) => ({
+      ...current,
+      tasks: current.tasks.filter((task) => !task.done),
     }));
   };
 
   const toggleTaskReminder = async (taskId: string) => {
-    const task = state.tasks.find((t) => t.id === taskId);
+    const task = state.tasks.find((item) => item.id === taskId);
     if (!task || task.done) return;
 
     if (!task.reminderEnabled) {
-      const id = await scheduleTaskReminder(task.title);
-      setState((s) => ({
-        ...s,
-        tasks: s.tasks.map((t) =>
-          t.id === taskId ? { ...t, reminderEnabled: true, reminderId: id } : t
+      const reminderId = await scheduleTaskReminder(task.title);
+      setState((current) => ({
+        ...current,
+        tasks: current.tasks.map((item) =>
+          item.id === taskId
+            ? { ...item, reminderEnabled: true, reminderId }
+            : item,
         ),
       }));
       return;
     }
 
-    await cancelReminder(task.reminderId);
-    setState((s) => ({
-      ...s,
-      tasks: s.tasks.map((t) =>
-        t.id === taskId ? { ...t, reminderEnabled: false, reminderId: null } : t
+    if (task.reminderId) {
+      await cancelReminder(task.reminderId);
+    }
+
+    setState((current) => ({
+      ...current,
+      tasks: current.tasks.map((item) =>
+        item.id === taskId
+          ? { ...item, reminderEnabled: false, reminderId: null }
+          : item,
       ),
     }));
   };
 
   const addCategory = (name: string, color: string) => {
-    const c: Category = { id: uid(), name, color };
-    setState((s) => ({ ...s, categories: [...s.categories, c] }));
+    const nextName = name.trim();
+    if (!nextName) return;
+
+    const category: Category = {
+      id: uid(),
+      name: nextName,
+      color,
+    };
+
+    setState((current) => ({
+      ...current,
+      categories: [...current.categories, category],
+    }));
   };
 
   const renameCategory = (id: string, name: string) => {
-    setState((s) => ({
-      ...s,
-      categories: s.categories.map((c) => (c.id === id ? { ...c, name } : c)),
+    const nextName = name.trim();
+    if (!nextName) return;
+
+    setState((current) => ({
+      ...current,
+      categories: current.categories.map((category) =>
+        category.id === id ? { ...category, name: nextName } : category,
+      ),
     }));
   };
 
   const recolorCategory = (id: string, color: string) => {
-    setState((s) => ({
-      ...s,
-      categories: s.categories.map((c) => (c.id === id ? { ...c, color } : c)),
+    setState((current) => ({
+      ...current,
+      categories: current.categories.map((category) =>
+        category.id === id ? { ...category, color } : category,
+      ),
     }));
   };
 
   const deleteCategory = (id: string) => {
-    setState((s) => {
-      const remaining = s.categories.filter((c) => c.id !== id);
+    setState((current) => {
+      const remaining = current.categories.filter((category) => category.id !== id);
       const fallback = remaining[0]?.id ?? null;
 
       return {
-        ...s,
+        ...current,
         categories: remaining,
-        tasks: s.tasks.map((t) =>
-          t.categoryId === id ? { ...t, categoryId: fallback ?? t.categoryId } : t
+        tasks: current.tasks.map((task) =>
+          task.categoryId === id
+            ? { ...task, categoryId: fallback ?? task.categoryId }
+            : task,
         ),
       };
     });
 
-    setActiveCategoryId((cur) => (cur === id ? null : cur));
+    setActiveCategoryId((current) => (current === id ? null : current));
   };
 
   return {
@@ -193,15 +371,27 @@ export function useTodo() {
     hydrated,
     activeCategoryId,
     setActiveCategoryId,
+
+    showCompleted,
+    setShowCompleted,
+
     categoriesWithCounts,
+    openTasks,
+    completedTasks,
     filteredTasks,
+
     addTask,
+    updateTask,
     toggleTaskDone,
+    deleteTask,
+    clearCompletedTasks,
     toggleTaskReminder,
+
     addCategory,
     renameCategory,
     recolorCategory,
     deleteCategory,
+
     reload: loadState,
   };
 }

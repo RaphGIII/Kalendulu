@@ -2,12 +2,20 @@
   "extends": "expo/tsconfig.base",
   "compilerOptions": {
     "strict": true,
+    "noImplicitAny": true,
+    "skipLibCheck": true,
+    "baseUrl": ".",
     "paths": {
       "@/*": [
         "./*"
       ]
     }
   },
+  "exclude": [
+    "node_modules",
+    "src/**/*.old.ts",
+    "planner-worker/.wrangler/**"
+  ],
   "include": [
     "**/*.ts",
     "**/*.tsx",

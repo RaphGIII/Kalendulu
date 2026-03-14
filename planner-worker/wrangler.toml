@@ -1,0 +1,12 @@
+name = "kalendulu-ai"
+main = "src/index.ts"
+compatibility_date = "2026-03-01"
+
+[vars]
+GROQ_MODEL_REFINE = "openai/gpt-oss-20b"
+GROQ_MODEL_PLAN = "openai/gpt-oss-20b"
+
+# Set this via:
+# wrangler secret put GROQ_API_KEY
+# Optional:
+# wrangler secret put APP_SHARED_SECRET

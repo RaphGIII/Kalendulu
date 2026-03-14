@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useFocusEffect } from '@react-navigation/native';
+
 import { CalEvent } from './types';
 import { STORAGE_KEYS } from '../shared/storageKeys';
 
@@ -21,6 +22,7 @@ function normalizeStoredEvent(raw: any): CalEvent | null {
     end,
     color: raw.color ?? '#D4AF37',
     location: raw.location ? String(raw.location) : undefined,
+    description: raw.description ? String(raw.description) : undefined,
   };
 }
 
@@ -30,6 +32,7 @@ export function useEvents() {
   const loadEvents = useCallback(async () => {
     try {
       const raw = await AsyncStorage.getItem(STORAGE_KEYS.CALENDAR_EVENTS);
+
       if (!raw) {
         setEvents([]);
         return;
@@ -62,7 +65,7 @@ export function useEvents() {
   useFocusEffect(
     useCallback(() => {
       loadEvents();
-    }, [loadEvents])
+    }, [loadEvents]),
   );
 
   const addEvent = useCallback(
@@ -73,29 +76,29 @@ export function useEvents() {
         return next;
       });
     },
-    [saveEvents]
+    [saveEvents],
   );
 
   const updateEvent = useCallback(
     async (updated: CalEvent) => {
       setEvents((prev) => {
-        const next = prev.map((e) => (e.id === updated.id ? updated : e));
+        const next = prev.map((event) => (event.id === updated.id ? updated : event));
         void saveEvents(next);
         return next;
       });
     },
-    [saveEvents]
+    [saveEvents],
   );
 
   const deleteEvent = useCallback(
     async (id: string) => {
       setEvents((prev) => {
-        const next = prev.filter((e) => e.id !== id);
+        const next = prev.filter((event) => event.id !== id);
         void saveEvents(next);
         return next;
       });
     },
-    [saveEvents]
+    [saveEvents],
   );
 
   return {

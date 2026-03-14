@@ -1,265 +1,200 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
-  ActivityIndicator,
-  Alert,
   Pressable,
   SafeAreaView,
   ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   View,
 } from 'react-native';
-import { useRouter } from 'expo-router';
-import dayjs from 'dayjs';
-import 'dayjs/locale/de';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import type { PlannerBundle, PlannerExecutionStep } from '../psyche/types';
 
-import { GOLD, PSYCHE_THEME } from '../psyche/styles';
-import { loadPsycheGoals, savePsycheGoals } from '../psyche/storage';
-import {
-  loadCalendarEventsBestEffort,
-  loadHabitsState,
-  loadTodoStateBestEffort,
-} from '../psyche/adapters';
-import { loadGoalLinks } from '../psyche/goalLinks';
-import { enrichGoalsWithProgress } from '../psyche/engine/goalProgress';
-import { computeGoalAdherence } from '../psyche/engine/goalAdherence';
-import { detectGoalStagnation } from '../psyche/engine/goalStagnation';
-import { buildGoalWeeklyReview } from '../psyche/engine/goalWeeklyReview';
-import { evaluateGoalBackend } from '../psyche/engine/backendGoalEvaluator';
-import { adaptGoalPlan } from '../psyche/engine/goalAdaptation';
-import type { PsycheGoal } from '../psyche/types';
+const BG = '#2E437A';
+const BG_DARK = '#233A73';
+const CARD = '#314A86';
+const CARD_DARK = '#243D77';
+const TEXT = '#FFFFFF';
+const MUTED = 'rgba(255,255,255,0.72)';
+const BORDER = 'rgba(255,255,255,0.10)';
+const GOLD = '#D4AF37';
+const SUCCESS = '#7CE0A3';
 
-dayjs.locale('de');
+const PLAN_STORAGE_KEY = 'kalendulu_ai_goal_plans_v2';
+const STEP_STATE_KEY = 'kalendulu_ai_goal_step_state_v2';
 
-function ProgressBar({ value }: { value: number }) {
-  const safeValue = Math.max(0, Math.min(100, value));
-  return (
-    <View style={styles.progressTrack}>
-      <View style={[styles.progressFill, { width: `${safeValue}%` }]} />
-    </View>
-  );
-}
-
-function trendLabel(trend?: 'up' | 'steady' | 'down') {
-  if (trend === 'up') return 'Steigend';
-  if (trend === 'down') return 'Rückläufig';
-  return 'Stabil';
-}
-
-function statusLabel(goal: PsycheGoal) {
-  if (!goal.progress) return 'Noch keine Bewertung';
-  return goal.progress.onTrack ? 'On Track' : 'Achtung';
-}
-
-type GoalInsights = {
-  adherence: ReturnType<typeof computeGoalAdherence>;
-  stagnation: ReturnType<typeof detectGoalStagnation>;
-  review: ReturnType<typeof buildGoalWeeklyReview>;
-  backendEval: ReturnType<typeof evaluateGoalBackend>;
+type StoredGoalPlan = {
+  id: string;
+  title: string;
+  createdAt: string;
+  refinement: unknown;
+  planner: PlannerBundle;
 };
 
+type StepItemState = Record<string, boolean>;
+type GoalStepState = Record<string, StepItemState>;
+type StepState = Record<string, GoalStepState>;
+
+function buildLineStyle(x1: number, y1: number, x2: number, y2: number) {
+  const dx = x2 - x1;
+  const dy = y2 - y1;
+  const length = Math.sqrt(dx * dx + dy * dy);
+  const angle = Math.atan2(dy, dx);
+
+  return {
+    position: 'absolute' as const,
+    left: x1,
+    top: y1,
+    width: length,
+    height: 2,
+    backgroundColor: 'rgba(255,255,255,0.45)',
+    transform: [{ rotate: `${angle}rad` }],
+  };
+}
+
+function getNodePositions(count: number) {
+  if (count <= 1) return [{ x: 230, y: 255 }];
+
+  const leftXs = [220, 165, 115, 80, 55, 38];
+  const rightXs = [245, 270, 295, 315, 330, 340];
+  const topY = 42;
+  const bottomY = 255;
+  const gap = (bottomY - topY) / Math.max(count - 1, 1);
+
+  return Array.from({ length: count }).map((_, index) => {
+    const y = bottomY - gap * index;
+    const x =
+      index === count - 1
+        ? 195
+        : index % 2 === 0
+          ? leftXs[Math.min(index, leftXs.length - 1)]
+          : rightXs[Math.min(index, rightXs.length - 1)];
+
+    return { x, y };
+  });
+}
+
+function getItemChecked(
+  state: StepState,
+  goalId: string,
+  stepId: string,
+  itemId: string,
+  fallback = false,
+) {
+  const goalState = state[goalId];
+  if (!goalState) return fallback;
+
+  const stepState = goalState[stepId];
+  if (!stepState) return fallback;
+
+  const value = stepState[itemId];
+  return typeof value === 'boolean' ? value : fallback;
+}
+
+function progressForStep(step: PlannerExecutionStep, state: StepState, goalId: string) {
+  const checklist = step.checklist ?? [];
+  const done = checklist.filter((item) =>
+    getItemChecked(state, goalId, step.id, item.id, item.done ?? false),
+  ).length;
+
+  return {
+    done,
+    total: checklist.length,
+    complete: checklist.length > 0 && done === checklist.length,
+  };
+}
+
 export default function ProgressScreen() {
-  const router = useRouter();
-
-  const [loading, setLoading] = useState(true);
-  const [adaptingGoalId, setAdaptingGoalId] = useState<string | null>(null);
-  const [goals, setGoals] = useState<PsycheGoal[]>([]);
-  const [insights, setInsights] = useState<Record<string, GoalInsights>>({});
-  const [editingGoalId, setEditingGoalId] = useState<string | null>(null);
-  const [progressDraft, setProgressDraft] = useState('');
-
-  const refresh = useCallback(async () => {
-    try {
-      setLoading(true);
-
-      const [storedGoals, habitsState, todoState, calendarEvents, goalLinks] =
-        await Promise.all([
-          loadPsycheGoals(),
-          loadHabitsState(),
-          loadTodoStateBestEffort(),
-          loadCalendarEventsBestEffort(),
-          loadGoalLinks(),
-        ]);
-
-      const enriched = enrichGoalsWithProgress(
-        storedGoals.filter((goal) => goal.status !== 'archived'),
-        habitsState?.habits ?? [],
-        todoState?.tasks ?? [],
-        calendarEvents ?? [],
-        goalLinks
-      );
-
-      const nextInsights: Record<string, GoalInsights> = {};
-
-      for (const goal of enriched) {
-        const adherence = computeGoalAdherence({
-          goal,
-          habits: habitsState?.habits ?? [],
-          tasks: todoState?.tasks ?? [],
-          calendarEvents: calendarEvents ?? [],
-          goalLinks,
-        });
-
-        const stagnation = detectGoalStagnation({
-          goal,
-          adherence,
-        });
-
-        const review = buildGoalWeeklyReview({
-          goal,
-          adherence,
-          stagnation,
-        });
-
-        const backendEval = evaluateGoalBackend(goal);
-
-        nextInsights[goal.id] = {
-          adherence,
-          stagnation,
-          review,
-          backendEval,
-        };
-      }
-
-      setGoals(enriched);
-      setInsights(nextInsights);
-      await savePsycheGoals(enriched);
-    } catch (error) {
-      console.error(error);
-      Alert.alert('Fehler', 'Der Fortschritt konnte nicht geladen werden.');
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  const [plans, setPlans] = useState<StoredGoalPlan[]>([]);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [stepState, setStepState] = useState<StepState>({});
 
   useEffect(() => {
-    refresh();
-  }, [refresh]);
+    (async () => {
+      try {
+        const rawPlans = await AsyncStorage.getItem(PLAN_STORAGE_KEY);
+        const rawState = await AsyncStorage.getItem(STEP_STATE_KEY);
 
-  const activeGoals = useMemo(
-    () => goals.filter((goal) => goal.status === 'active' || goal.status === 'draft'),
-    [goals]
+        setPlans(rawPlans ? (JSON.parse(rawPlans) as StoredGoalPlan[]) : []);
+        setStepState(rawState ? (JSON.parse(rawState) as StepState) : {});
+      } catch (error) {
+        console.error(error);
+      }
+    })();
+  }, []);
+
+  const selectedPlan = useMemo(
+    () => plans.find((plan) => plan.id === selectedId) ?? null,
+    [plans, selectedId],
   );
 
-  async function saveSelfReport(goalId: string) {
-    const parsed = Number(progressDraft.replace(',', '.'));
-    if (Number.isNaN(parsed)) {
-      Alert.alert('Ungültig', 'Bitte gib eine Zahl zwischen 0 und 100 ein.');
-      return;
-    }
+  const selectedSteps = selectedPlan?.planner.executionSteps ?? [];
 
-    const next = goals.map((goal) =>
-      goal.id === goalId
-        ? {
-            ...goal,
-            userReportedProgress: Math.max(0, Math.min(100, parsed)),
-            lastCheckInAt: new Date().toISOString(),
-          }
-        : goal
-    );
+  const currentIndex = useMemo(() => {
+    if (!selectedPlan) return 0;
 
-    try {
-      const [habitsState, todoState, calendarEvents, goalLinks] = await Promise.all([
-        loadHabitsState(),
-        loadTodoStateBestEffort(),
-        loadCalendarEventsBestEffort(),
-        loadGoalLinks(),
-      ]);
+    const index = selectedSteps.findIndex((step) => {
+      const p = progressForStep(step, stepState, selectedPlan.id);
+      return !p.complete;
+    });
 
-      const enriched = enrichGoalsWithProgress(
-        next,
-        habitsState?.habits ?? [],
-        todoState?.tasks ?? [],
-        calendarEvents ?? [],
-        goalLinks
-      );
+    return index >= 0 ? index : Math.max(selectedSteps.length - 1, 0);
+  }, [selectedPlan, selectedSteps, stepState]);
 
-      const nextInsights: Record<string, GoalInsights> = {};
+  const positions = useMemo(() => getNodePositions(selectedSteps.length), [selectedSteps.length]);
 
-      for (const goal of enriched) {
-        const adherence = computeGoalAdherence({
-          goal,
-          habits: habitsState?.habits ?? [],
-          tasks: todoState?.tasks ?? [],
-          calendarEvents: calendarEvents ?? [],
-          goalLinks,
-        });
+  async function toggleChecklist(goalId: string, stepId: string, itemId: string) {
+    const current = getItemChecked(stepState, goalId, stepId, itemId, false);
 
-        const stagnation = detectGoalStagnation({
-          goal,
-          adherence,
-        });
+    const next: StepState = {
+      ...stepState,
+      [goalId]: {
+        ...(stepState[goalId] ?? {}),
+        [stepId]: {
+          ...(stepState[goalId]?.[stepId] ?? {}),
+          [itemId]: !current,
+        },
+      },
+    };
 
-        const review = buildGoalWeeklyReview({
-          goal,
-          adherence,
-          stagnation,
-        });
-
-        const backendEval = evaluateGoalBackend(goal);
-
-        nextInsights[goal.id] = {
-          adherence,
-          stagnation,
-          review,
-          backendEval,
-        };
-      }
-
-      setGoals(enriched);
-      setInsights(nextInsights);
-      await savePsycheGoals(enriched);
-      setEditingGoalId(null);
-      setProgressDraft('');
-    } catch (error) {
-      console.error(error);
-      Alert.alert('Fehler', 'Der Check-in konnte nicht gespeichert werden.');
-    }
+    setStepState(next);
+    await AsyncStorage.setItem(STEP_STATE_KEY, JSON.stringify(next));
   }
 
-  async function handleAdaptGoal(goal: PsycheGoal) {
-    const insight = insights[goal.id];
-    if (!insight) return;
-
-    try {
-      setAdaptingGoalId(goal.id);
-
-      const result = adaptGoalPlan({
-        goal,
-        backendEvaluation: insight.backendEval,
-        adherence: insight.adherence,
-        stagnation: insight.stagnation,
-      });
-
-      const nextGoals = goals.map((item) =>
-        item.id === goal.id ? result.adaptedGoal : item
-      );
-
-      setGoals(nextGoals);
-      await savePsycheGoals(nextGoals);
-      await refresh();
-
-      Alert.alert('Plan angepasst', result.adaptationSummary);
-    } catch (error) {
-      console.error(error);
-      Alert.alert('Fehler', 'Der Plan konnte nicht angepasst werden.');
-    } finally {
-      setAdaptingGoalId(null);
-    }
-  }
-
-  function goToGoal(goalId: string) {
-    router.push((`/goal/${goalId}`) as never);
-  }
-
-  if (loading) {
+  if (!selectedPlan) {
     return (
       <SafeAreaView style={styles.safe}>
-        <View style={styles.center}>
-          <ActivityIndicator color={GOLD} />
-          <Text style={styles.centerText}>Fortschritt wird geladen ...</Text>
-        </View>
+        <ScrollView contentContainerStyle={styles.content}>
+          <View style={styles.hero}>
+            <Text style={styles.heroTitle}>Fortschritt</Text>
+            <Text style={styles.heroSubtitle}>
+              Hier siehst du nur deine Ziele. Klick auf ein Ziel und arbeite dann den Berg Schritt für Schritt hoch.
+            </Text>
+          </View>
+
+          <View style={styles.listCard}>
+            <Text style={styles.sectionTitle}>Deine Ziele</Text>
+
+            {!plans.length ? (
+              <Text style={styles.emptyText}>
+                Noch kein gespeicherter KI-Plan vorhanden. Erstelle zuerst im Psyche-Tab ein Ziel.
+              </Text>
+            ) : (
+              plans.map((plan) => (
+                <Pressable
+                  key={plan.id}
+                  onPress={() => setSelectedId(plan.id)}
+                  style={styles.goalCard}
+                >
+                  <Text style={styles.goalTitle}>{plan.title}</Text>
+                  <Text style={styles.goalMeta}>
+                    {plan.planner.executionSteps?.length ?? 0} Schritte
+                  </Text>
+                </Pressable>
+              ))
+            )}
+          </View>
+        </ScrollView>
       </SafeAreaView>
     );
   }
@@ -267,243 +202,132 @@ export default function ProgressScreen() {
   return (
     <SafeAreaView style={styles.safe}>
       <ScrollView contentContainerStyle={styles.content}>
-        <View style={styles.heroCard}>
-          <Text style={styles.heroEyebrow}>Fortschritt</Text>
-          <Text style={styles.heroTitle}>Alle Zielsignale an einem Ort</Text>
-          <Text style={styles.heroText}>
-            Fortschritt, Ursachen, Weekly Review und Plananpassung laufen jetzt in einem einzigen Tab zusammen.
+        <View style={styles.hero}>
+          <Pressable onPress={() => setSelectedId(null)} style={styles.backButton}>
+            <Text style={styles.backButtonText}>← Zurück zur Liste</Text>
+          </Pressable>
+
+          <Text style={styles.heroTitle}>{selectedPlan.title}</Text>
+          <Text style={styles.heroSubtitle}>
+            Arbeite einfach die Punkte ab. Mit jedem Haken steigst du höher auf den Berg.
           </Text>
         </View>
 
-        {activeGoals.length === 0 ? (
-          <View style={styles.card}>
-            <Text style={styles.cardTitle}>Noch keine aktiven Ziele</Text>
-            <Text style={styles.cardText}>
-              Lege zuerst im Psyche-Tab ein Ziel an. Danach erscheint hier automatisch die volle Zielanalyse.
-            </Text>
-          </View>
-        ) : null}
+        <View style={styles.mountainCard}>
+          <Text style={styles.sectionTitle}>Dein Weg zum Ziel</Text>
 
-        {activeGoals.map((goal) => {
-          const progress = goal.progress;
-          const total = progress?.total ?? 0;
-          const insight = insights[goal.id];
+          <View style={styles.mountainStage}>
+            <View style={styles.mountainLeft} />
+            <View style={styles.mountainRight} />
+            <Text style={styles.flag}>🚩</Text>
 
-          return (
-            <View key={goal.id} style={styles.goalCard}>
-              <View style={styles.goalHeaderRow}>
-                <View style={{ flex: 1 }}>
-                  <Pressable onPress={() => goToGoal(goal.id)}>
-                    <Text style={styles.goalTitle}>{goal.title}</Text>
-                  </Pressable>
-                  <Text style={styles.goalMeta}>
-                    Ziel bis {dayjs(goal.targetDate).format('DD.MM.YYYY')}
-                  </Text>
-                </View>
+            {positions.map((pos, index) => {
+              const step = selectedSteps[index];
+              const done = progressForStep(step, stepState, selectedPlan.id).complete;
+              const active = index === currentIndex;
 
+              return (
                 <View
+                  key={step.id}
                   style={[
-                    styles.badge,
-                    progress?.onTrack ? styles.badgeGood : styles.badgeWarn,
+                    styles.node,
+                    {
+                      left: pos.x,
+                      top: pos.y,
+                    },
+                    done && styles.nodeDone,
+                    active && styles.nodeActive,
                   ]}
                 >
-                  <Text style={styles.badgeText}>{statusLabel(goal)}</Text>
-                </View>
-              </View>
-
-              <Text style={styles.percentLabel}>{total}% Gesamtfortschritt</Text>
-              <ProgressBar value={total} />
-
-              <View style={styles.statsRow}>
-                <View style={styles.statBox}>
-                  <Text style={styles.statValue}>Lv. {progress?.level ?? 1}</Text>
-                  <Text style={styles.statLabel}>Level</Text>
-                </View>
-                <View style={styles.statBox}>
-                  <Text style={styles.statValue}>{trendLabel(progress?.trend)}</Text>
-                  <Text style={styles.statLabel}>Trend</Text>
-                </View>
-                <View style={styles.statBox}>
-                  <Text style={styles.statValue}>
-                    {goal.executionPlan?.intensityPreset ?? goal.intensityPreset ?? 'balanced'}
+                  <Text
+                    style={[
+                      styles.nodeText,
+                      done && styles.nodeTextDone,
+                      active && styles.nodeTextActive,
+                    ]}
+                  >
+                    {index + 1}
                   </Text>
-                  <Text style={styles.statLabel}>Intensität</Text>
+                </View>
+              );
+            })}
+
+            {positions.slice(0, -1).map((pos, index) => {
+              const next = positions[index + 1];
+              return (
+                <View
+                  key={`line_${index}`}
+                  style={buildLineStyle(pos.x + 11, pos.y + 11, next.x + 11, next.y + 11)}
+                />
+              );
+            })}
+          </View>
+        </View>
+
+        <View style={styles.stepsCard}>
+          <Text style={styles.sectionTitle}>Schritte</Text>
+
+          {selectedSteps.map((step, index) => {
+            const p = progressForStep(step, stepState, selectedPlan.id);
+            const isLocked = index > currentIndex;
+            const isActive = index === currentIndex;
+
+            return (
+              <View
+                key={step.id}
+                style={[
+                  styles.stepCard,
+                  isActive && styles.stepCardActive,
+                  p.complete && styles.stepCardDone,
+                ]}
+              >
+                <View style={styles.stepHeader}>
+                  <Text style={styles.stepHeaderTitle}>
+                    STEP {String(index + 1).padStart(2, '0')}
+                  </Text>
+                  <Text style={styles.stepHeaderState}>
+                    {p.complete ? 'Erledigt' : isLocked ? 'Gesperrt' : 'Aktuell'}
+                  </Text>
+                </View>
+
+                <Text style={styles.stepTitle}>{step.title}</Text>
+                <Text style={styles.stepText}>{step.explanation}</Text>
+
+                <View style={{ marginTop: 12, gap: 10 }}>
+                  {step.checklist.map((item) => {
+                    const checked = getItemChecked(
+                      stepState,
+                      selectedPlan.id,
+                      step.id,
+                      item.id,
+                      item.done ?? false,
+                    );
+
+                    return (
+                      <Pressable
+                        key={item.id}
+                        disabled={isLocked}
+                        onPress={() => toggleChecklist(selectedPlan.id, step.id, item.id)}
+                        style={[
+                          styles.checkItem,
+                          checked && styles.checkItemDone,
+                          isLocked && styles.checkItemLocked,
+                        ]}
+                      >
+                        <View style={[styles.checkCircle, checked && styles.checkCircleDone]}>
+                          {checked ? <Text style={styles.checkMark}>✓</Text> : null}
+                        </View>
+                        <Text style={[styles.checkText, checked && styles.checkTextDone]}>
+                          {item.label}
+                        </Text>
+                      </Pressable>
+                    );
+                  })}
                 </View>
               </View>
-
-              <View style={styles.breakdownCard}>
-                <Text style={styles.sectionTitle}>Bewertung</Text>
-                <Text style={styles.breakdownLine}>
-                  Plan-Tauglichkeit: {progress?.complianceScore ?? 0}%
-                </Text>
-                <Text style={styles.breakdownLine}>
-                  Umsetzung: {progress?.executionScore ?? 0}%
-                </Text>
-                <Text style={styles.breakdownLine}>
-                  Selbsteinschätzung: {progress?.selfReportScore ?? 0}%
-                </Text>
-                <Text style={styles.breakdownLine}>
-                  Zielmetriken: {progress?.metricScore ?? 0}%
-                </Text>
-              </View>
-
-              {insight ? (
-                <>
-                  <View style={styles.breakdownCard}>
-                    <Text style={styles.sectionTitle}>Adherence</Text>
-                    <Text style={styles.breakdownLine}>
-                      Habits: {insight.adherence.habitAdherence}%
-                    </Text>
-                    <Text style={styles.breakdownLine}>
-                      Todos: {insight.adherence.todoAdherence}%
-                    </Text>
-                    <Text style={styles.breakdownLine}>
-                      Kalender: {insight.adherence.calendarAdherence}%
-                    </Text>
-                    <Text style={styles.breakdownLine}>
-                      Gesamt: {insight.adherence.overallAdherence}%
-                    </Text>
-
-                    {insight.adherence.signals.map((signal, index) => (
-                      <Text key={`${signal}-${index}`} style={styles.bulletText}>
-                        • {signal}
-                      </Text>
-                    ))}
-                  </View>
-
-                  <View style={styles.breakdownCard}>
-                    <Text style={styles.sectionTitle}>Stagnation & Risiko</Text>
-                    <Text style={styles.breakdownLine}>
-                      Stagnation: {insight.stagnation.isStagnating ? 'Ja' : 'Nein'}
-                    </Text>
-                    <Text style={styles.breakdownLine}>
-                      Schwere: {insight.stagnation.severity}
-                    </Text>
-                    <Text style={styles.breakdownLine}>
-                      Grund: {insight.stagnation.reason}
-                    </Text>
-                    <Text style={styles.breakdownLine}>
-                      Hauptrisiko: {insight.backendEval.mainRisk}
-                    </Text>
-
-                    {insight.backendEval.secondaryRisks.map((risk, index) => (
-                      <Text key={`${risk}-${index}`} style={styles.bulletText}>
-                        • {risk}
-                      </Text>
-                    ))}
-                  </View>
-
-                  <View style={styles.breakdownCard}>
-                    <Text style={styles.sectionTitle}>Weekly Review</Text>
-                    <Text style={styles.reviewWeekLabel}>{insight.review.weekLabel}</Text>
-                    <Text style={styles.cardText}>{insight.review.summary}</Text>
-
-                    <Text style={styles.subTitle}>Wins</Text>
-                    {insight.review.wins.length > 0 ? (
-                      insight.review.wins.map((item, index) => (
-                        <Text key={`${item}-${index}`} style={styles.bulletText}>
-                          • {item}
-                        </Text>
-                      ))
-                    ) : (
-                      <Text style={styles.cardText}>Noch keine klaren Wins erkennbar.</Text>
-                    )}
-
-                    <Text style={styles.subTitle}>Concerns</Text>
-                    {insight.review.concerns.length > 0 ? (
-                      insight.review.concerns.map((item, index) => (
-                        <Text key={`${item}-${index}`} style={styles.bulletText}>
-                          • {item}
-                        </Text>
-                      ))
-                    ) : (
-                      <Text style={styles.cardText}>Aktuell keine größeren Warnsignale.</Text>
-                    )}
-
-                    <Text style={styles.subTitle}>Nächste Woche Fokus</Text>
-                    {insight.review.nextWeekFocus.map((item, index) => (
-                      <Text key={`${item}-${index}`} style={styles.bulletText}>
-                        • {item}
-                      </Text>
-                    ))}
-                  </View>
-                </>
-              ) : null}
-
-              <View style={styles.breakdownCard}>
-                <Text style={styles.sectionTitle}>Eigener Check-in</Text>
-
-                {editingGoalId === goal.id ? (
-                  <>
-                    <TextInput
-                      value={progressDraft}
-                      onChangeText={setProgressDraft}
-                      keyboardType="numeric"
-                      placeholder="0 bis 100"
-                      placeholderTextColor="rgba(255,255,255,0.35)"
-                      style={styles.input}
-                    />
-                    <View style={styles.actionRow}>
-                      <Pressable
-                        style={[styles.actionBtn, styles.primaryBtn]}
-                        onPress={() => saveSelfReport(goal.id)}
-                      >
-                        <Text style={styles.primaryBtnText}>Speichern</Text>
-                      </Pressable>
-                      <Pressable
-                        style={[styles.actionBtn, styles.secondaryBtn]}
-                        onPress={() => {
-                          setEditingGoalId(null);
-                          setProgressDraft('');
-                        }}
-                      >
-                        <Text style={styles.secondaryBtnText}>Abbrechen</Text>
-                      </Pressable>
-                    </View>
-                  </>
-                ) : (
-                  <>
-                    <Text style={styles.cardText}>
-                      Deine letzte Selbsteinschätzung: {goal.userReportedProgress}%
-                    </Text>
-                    <Pressable
-                      style={[styles.actionBtn, styles.primaryBtn]}
-                      onPress={() => {
-                        setEditingGoalId(goal.id);
-                        setProgressDraft(String(goal.userReportedProgress));
-                      }}
-                    >
-                      <Text style={styles.primaryBtnText}>Fortschritt aktualisieren</Text>
-                    </Pressable>
-                  </>
-                )}
-              </View>
-
-              <View style={styles.goalActionsRow}>
-                <Pressable
-                  style={styles.goalActionBtn}
-                  onPress={() => goToGoal(goal.id)}
-                >
-                  <Text style={styles.goalActionBtnText}>Details</Text>
-                </Pressable>
-
-                <Pressable
-                  style={styles.goalActionBtn}
-                  onPress={() => handleAdaptGoal(goal)}
-                  disabled={adaptingGoalId === goal.id}
-                >
-                  <Text style={styles.goalActionBtnText}>
-                    {adaptingGoalId === goal.id ? 'Passt an ...' : 'Plan anpassen'}
-                  </Text>
-                </Pressable>
-              </View>
-            </View>
-          );
-        })}
-
-        <Pressable style={styles.refreshBtn} onPress={refresh}>
-          <Text style={styles.refreshBtnText}>Neu berechnen</Text>
-        </Pressable>
+            );
+          })}
+        </View>
       </ScrollView>
     </SafeAreaView>
   );
@@ -512,258 +336,251 @@ export default function ProgressScreen() {
 const styles = StyleSheet.create({
   safe: {
     flex: 1,
-    backgroundColor: PSYCHE_THEME.bg,
+    backgroundColor: BG,
   },
   content: {
-    padding: 16,
-    paddingBottom: 40,
-    gap: 14,
+    paddingTop: 20,
+    paddingHorizontal: 18,
+    paddingBottom: 120,
+    gap: 16,
   },
-  center: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    gap: 10,
-  },
-  centerText: {
-    color: PSYCHE_THEME.text,
-    fontSize: 15,
-  },
-  heroCard: {
-    backgroundColor: PSYCHE_THEME.cardDark,
-    borderRadius: 18,
+  hero: {
+    backgroundColor: BG_DARK,
+    borderRadius: 24,
     padding: 18,
     borderWidth: 1,
-    borderColor: PSYCHE_THEME.border,
-  },
-  heroEyebrow: {
-    color: GOLD,
-    fontSize: 12,
-    fontWeight: '800',
-    textTransform: 'uppercase',
-    letterSpacing: 0.8,
-    marginBottom: 6,
+    borderColor: BORDER,
   },
   heroTitle: {
-    color: PSYCHE_THEME.text,
-    fontSize: 22,
-    fontWeight: '800',
-    marginBottom: 8,
+    color: TEXT,
+    fontSize: 28,
+    fontWeight: '900',
+    marginTop: 6,
   },
-  heroText: {
-    color: PSYCHE_THEME.muted,
+  heroSubtitle: {
+    color: MUTED,
     fontSize: 14,
-    lineHeight: 20,
+    lineHeight: 22,
+    marginTop: 8,
   },
-  card: {
-    backgroundColor: PSYCHE_THEME.card,
-    borderRadius: 16,
+  backButton: {
+    alignSelf: 'flex-start',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 999,
+    backgroundColor: 'rgba(255,255,255,0.08)',
+  },
+  backButtonText: {
+    color: TEXT,
+    fontWeight: '800',
+    fontSize: 13,
+  },
+  listCard: {
+    backgroundColor: CARD,
+    borderRadius: 22,
     padding: 16,
     borderWidth: 1,
-    borderColor: PSYCHE_THEME.border,
+    borderColor: BORDER,
   },
-  cardTitle: {
-    color: PSYCHE_THEME.text,
-    fontSize: 17,
-    fontWeight: '700',
-    marginBottom: 6,
+  sectionTitle: {
+    color: GOLD,
+    fontSize: 18,
+    fontWeight: '900',
   },
-  cardText: {
-    color: PSYCHE_THEME.muted,
+  emptyText: {
+    color: MUTED,
     fontSize: 14,
-    lineHeight: 20,
+    lineHeight: 22,
+    marginTop: 12,
   },
   goalCard: {
-    backgroundColor: PSYCHE_THEME.cardDark,
-    borderRadius: 20,
-    padding: 16,
+    marginTop: 12,
+    backgroundColor: CARD_DARK,
+    borderRadius: 18,
+    padding: 14,
     borderWidth: 1,
-    borderColor: PSYCHE_THEME.border,
-    gap: 12,
-  },
-  goalHeaderRow: {
-    flexDirection: 'row',
-    gap: 10,
-    alignItems: 'flex-start',
+    borderColor: BORDER,
   },
   goalTitle: {
-    color: PSYCHE_THEME.text,
-    fontSize: 20,
-    fontWeight: '800',
+    color: TEXT,
+    fontSize: 17,
+    fontWeight: '900',
   },
   goalMeta: {
-    color: PSYCHE_THEME.muted,
+    color: MUTED,
     fontSize: 13,
-    marginTop: 4,
+    marginTop: 6,
   },
-  badge: {
-    borderRadius: 999,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-  },
-  badgeGood: {
-    backgroundColor: 'rgba(69, 201, 122, 0.16)',
+  mountainCard: {
+    backgroundColor: CARD,
+    borderRadius: 22,
+    padding: 16,
     borderWidth: 1,
-    borderColor: 'rgba(69, 201, 122, 0.35)',
+    borderColor: BORDER,
   },
-  badgeWarn: {
-    backgroundColor: 'rgba(255, 184, 77, 0.15)',
-    borderWidth: 1,
-    borderColor: 'rgba(255, 184, 77, 0.35)',
-  },
-  badgeText: {
-    color: PSYCHE_THEME.text,
-    fontSize: 12,
-    fontWeight: '700',
-  },
-  percentLabel: {
-    color: PSYCHE_THEME.text,
-    fontSize: 15,
-    fontWeight: '700',
-  },
-  progressTrack: {
-    width: '100%',
-    height: 12,
-    borderRadius: 999,
-    backgroundColor: 'rgba(255,255,255,0.10)',
+  mountainStage: {
+    marginTop: 16,
+    height: 300,
+    position: 'relative',
     overflow: 'hidden',
+    borderRadius: 18,
+    backgroundColor: '#E8E8E8',
   },
-  progressFill: {
-    height: '100%',
-    backgroundColor: GOLD,
+  mountainLeft: {
+    position: 'absolute',
+    left: 35,
+    bottom: 0,
+    width: 0,
+    height: 0,
+    borderLeftWidth: 140,
+    borderRightWidth: 70,
+    borderBottomWidth: 235,
+    borderLeftColor: 'transparent',
+    borderRightColor: 'transparent',
+    borderBottomColor: '#4D4D4D',
+  },
+  mountainRight: {
+    position: 'absolute',
+    left: 145,
+    bottom: 0,
+    width: 0,
+    height: 0,
+    borderLeftWidth: 55,
+    borderRightWidth: 150,
+    borderBottomWidth: 235,
+    borderLeftColor: 'transparent',
+    borderRightColor: 'transparent',
+    borderBottomColor: '#6A6A6A',
+  },
+  flag: {
+    position: 'absolute',
+    top: 20,
+    left: 186,
+    fontSize: 24,
+  },
+  node: {
+    position: 'absolute',
+    width: 22,
+    height: 22,
     borderRadius: 999,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 2,
+    borderColor: '#D66',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  statsRow: {
+  nodeDone: {
+    backgroundColor: SUCCESS,
+    borderColor: SUCCESS,
+  },
+  nodeActive: {
+    backgroundColor: GOLD,
+    borderColor: GOLD,
+    transform: [{ scale: 1.1 }],
+  },
+  nodeText: {
+    fontSize: 10,
+    fontWeight: '900',
+    color: '#B44',
+  },
+  nodeTextDone: {
+    color: '#163223',
+  },
+  nodeTextActive: {
+    color: '#13213F',
+  },
+  stepsCard: {
+    backgroundColor: CARD,
+    borderRadius: 22,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: BORDER,
+  },
+  stepCard: {
+    marginTop: 14,
+    backgroundColor: CARD_DARK,
+    borderRadius: 18,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: BORDER,
+  },
+  stepCardActive: {
+    borderColor: 'rgba(212,175,55,0.40)',
+    backgroundColor: 'rgba(212,175,55,0.08)',
+  },
+  stepCardDone: {
+    borderColor: 'rgba(124,224,163,0.30)',
+    backgroundColor: 'rgba(124,224,163,0.06)',
+  },
+  stepHeader: {
     flexDirection: 'row',
+    justifyContent: 'space-between',
     gap: 10,
   },
-  statBox: {
-    flex: 1,
-    backgroundColor: 'rgba(255,255,255,0.05)',
+  stepHeaderTitle: {
+    color: GOLD,
+    fontWeight: '900',
+    fontSize: 12,
+  },
+  stepHeaderState: {
+    color: MUTED,
+    fontWeight: '800',
+    fontSize: 12,
+  },
+  stepTitle: {
+    color: TEXT,
+    fontWeight: '900',
+    fontSize: 17,
+    marginTop: 6,
+  },
+  stepText: {
+    color: MUTED,
+    fontSize: 14,
+    lineHeight: 21,
+    marginTop: 8,
+  },
+  checkItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    backgroundColor: 'rgba(255,255,255,0.06)',
     borderRadius: 14,
     padding: 12,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.07)',
+    borderColor: BORDER,
   },
-  statValue: {
-    color: PSYCHE_THEME.text,
-    fontSize: 15,
-    fontWeight: '800',
-    marginBottom: 4,
+  checkItemDone: {
+    backgroundColor: 'rgba(124,224,163,0.10)',
+    borderColor: 'rgba(124,224,163,0.22)',
   },
-  statLabel: {
-    color: PSYCHE_THEME.muted,
-    fontSize: 12,
+  checkItemLocked: {
+    opacity: 0.5,
   },
-  breakdownCard: {
-    backgroundColor: 'rgba(255,255,255,0.05)',
-    borderRadius: 16,
-    padding: 14,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.07)',
-  },
-  sectionTitle: {
-    color: PSYCHE_THEME.text,
-    fontSize: 15,
-    fontWeight: '800',
-    marginBottom: 8,
-  },
-  subTitle: {
-    color: GOLD,
-    fontSize: 13,
-    fontWeight: '800',
-    marginTop: 12,
-    marginBottom: 6,
-  },
-  breakdownLine: {
-    color: PSYCHE_THEME.muted,
-    fontSize: 14,
-    lineHeight: 21,
-  },
-  reviewWeekLabel: {
-    color: GOLD,
-    fontSize: 12,
-    fontWeight: '800',
-    marginBottom: 6,
-  },
-  bulletText: {
-    color: PSYCHE_THEME.text,
-    fontSize: 14,
-    lineHeight: 21,
-  },
-  input: {
-    backgroundColor: 'rgba(255,255,255,0.08)',
-    borderWidth: 1,
-    borderColor: PSYCHE_THEME.border,
-    borderRadius: 14,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    color: PSYCHE_THEME.text,
-    fontSize: 15,
-  },
-  actionRow: {
-    flexDirection: 'row',
-    gap: 10,
-    marginTop: 10,
-  },
-  actionBtn: {
-    borderRadius: 14,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
+  checkCircle: {
+    width: 24,
+    height: 24,
+    borderRadius: 999,
+    borderWidth: 2,
+    borderColor: 'rgba(255,255,255,0.30)',
     alignItems: 'center',
     justifyContent: 'center',
   },
-  primaryBtn: {
-    backgroundColor: GOLD,
+  checkCircleDone: {
+    backgroundColor: SUCCESS,
+    borderColor: SUCCESS,
+  },
+  checkMark: {
+    color: '#163223',
+    fontWeight: '900',
+  },
+  checkText: {
+    color: TEXT,
+    fontSize: 14,
     flex: 1,
+    lineHeight: 20,
   },
-  secondaryBtn: {
-    backgroundColor: 'rgba(255,255,255,0.08)',
-    borderWidth: 1,
-    borderColor: PSYCHE_THEME.border,
-    flex: 1,
-  },
-  primaryBtnText: {
-    color: '#162033',
-    fontSize: 14,
+  checkTextDone: {
+    color: SUCCESS,
     fontWeight: '800',
-  },
-  secondaryBtnText: {
-    color: PSYCHE_THEME.text,
-    fontSize: 14,
-    fontWeight: '700',
-  },
-  goalActionsRow: {
-    flexDirection: 'row',
-    gap: 10,
-  },
-  goalActionBtn: {
-    flex: 1,
-    backgroundColor: 'rgba(212,175,55,0.12)',
-    borderColor: 'rgba(212,175,55,0.28)',
-    borderWidth: 1,
-    borderRadius: 14,
-    paddingVertical: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  goalActionBtnText: {
-    color: GOLD,
-    fontWeight: '800',
-    fontSize: 14,
-  },
-  refreshBtn: {
-    backgroundColor: 'rgba(212,175,55,0.12)',
-    borderColor: 'rgba(212,175,55,0.28)',
-    borderWidth: 1,
-    borderRadius: 16,
-    paddingVertical: 14,
-    alignItems: 'center',
-    marginTop: 4,
-  },
-  refreshBtnText: {
-    color: GOLD,
-    fontWeight: '800',
-    fontSize: 14,
   },
 });

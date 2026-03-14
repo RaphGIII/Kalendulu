@@ -1,629 +1,640 @@
 import React, { useMemo, useState } from 'react';
 import {
-  View,
-  Text,
-  SafeAreaView,
   Pressable,
+  SafeAreaView,
   ScrollView,
   StyleSheet,
-  Dimensions,
-  Modal,
+  Text,
+  View,
 } from 'react-native';
 import dayjs from 'dayjs';
 import 'dayjs/locale/de';
-import { PinchGestureHandler, State } from 'react-native-gesture-handler';
 
-import { HOURS_START, HOURS_END, HOUR_HEIGHT, LEFT_GUTTER, clamp } from './constants';
+import { HOURS_START, HOURS_END, HOUR_HEIGHT, clamp } from './constants';
 import { formatHeaderLabel, getShownDays } from './date';
 import { useNow } from './useNow';
-import EventModal from './EventModal';
 import { useEvents } from './useEvents';
+import EventModal from './EventModal';
 import MonthView from './MonthView';
-import { CalEvent } from './types';
 import { ACCENT_GOLD, THEME } from './colors';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import { STORAGE_KEYS } from '../shared/storageKeys';
+import type { CalEvent } from './types';
+
 dayjs.locale('de');
 
-const GRID_LINE_OFFSET = 18;
-type ViewKind = 'days' | 'month';
+type CalendarMode = 'month' | 'three' | 'day';
 
-const VIEW_OPTIONS: Array<{ key: string; label: string; kind: ViewKind; daysCount?: number }> = [
-  { key: '1', label: '1 Tag', kind: 'days', daysCount: 1 },
-  { key: '2', label: '2 Tage', kind: 'days', daysCount: 2 },
-  { key: '3', label: '3 Tage', kind: 'days', daysCount: 3 },
-  { key: '4', label: '4 Tage', kind: 'days', daysCount: 4 },
-  { key: '5', label: '5 Tage', kind: 'days', daysCount: 5 },
-  { key: '7', label: '7 Tage', kind: 'days', daysCount: 7 },
-  { key: 'm', label: 'Monat', kind: 'month' },
-];
+type LayoutEvent = {
+  event: CalEvent;
+  top: number;
+  height: number;
+  left: number;
+  width: number;
+};
 
-export default function WeekCalendar() {
-  const [anchorDate, setAnchorDate] = useState(new Date());
-  const [view, setView] = useState<ViewKind>('days');
+const HOUR_COUNT = HOURS_END - HOURS_START;
+const BODY_HEIGHT = HOUR_COUNT * HOUR_HEIGHT;
+const MIN_EVENT_HEIGHT = 18;
+const LEFT_GUTTER_COMPACT = 48;
 
-  // ✅ Standard = 4 Tage
-  const [daysCount, setDaysCount] = useState(4);
+function getEventTop(event: CalEvent) {
+  const start = dayjs(event.start);
+  const hourFloat = start.hour() + start.minute() / 60;
+  const clamped = clamp(hourFloat, HOURS_START, HOURS_END);
+  return (clamped - HOURS_START) * HOUR_HEIGHT;
+}
 
-  const [modalVisible, setModalVisible] = useState(false);
-  const [viewPickerOpen, setViewPickerOpen] = useState(false);
-  const [editingEvent, setEditingEvent] = useState<CalEvent | null>(null);
+function getEventHeight(event: CalEvent) {
+  const start = dayjs(event.start);
+  const end = dayjs(event.end);
+  const durationMin = Math.max(15, end.diff(start, 'minute'));
+  return Math.max(MIN_EVENT_HEIGHT, (durationMin / 60) * HOUR_HEIGHT);
+}
 
-  const now = useNow(30_000);
-  const { events, addEvent, updateEvent, deleteEvent } = useEvents();
+function overlaps(a: CalEvent, b: CalEvent) {
+  const aStart = dayjs(a.start).valueOf();
+  const aEnd = dayjs(a.end).valueOf();
+  const bStart = dayjs(b.start).valueOf();
+  const bEnd = dayjs(b.end).valueOf();
+  return aStart < bEnd && bStart < aEnd;
+}
 
-  const shownDays = useMemo(() => getShownDays(anchorDate, daysCount), [anchorDate, daysCount]);
-
-  const { width } = Dimensions.get('window');
-  const contentWidth = width - 16 * 2;
-
-  const dayColumnWidth = view === 'days' ? (contentWidth - LEFT_GUTTER) / shownDays.length : 0;
-
-  const headerLabel = useMemo(() => {
-    if (view === 'month') return dayjs(anchorDate).format('MMMM YYYY');
-    return formatHeaderLabel(shownDays);
-  }, [view, anchorDate, shownDays]);
-
-  const yearLabel = useMemo(() => dayjs(anchorDate).format('YYYY'), [anchorDate]);
-
-  const viewLabel = useMemo(() => (view === 'month' ? 'Monat' : `${daysCount} Tage`), [view, daysCount]);
-
-  const goToday = () => {
-    setAnchorDate(new Date());
-    setView('days');
-    setDaysCount(4);
-  };
-
-  const goPrev = () => {
-    const a = dayjs(anchorDate);
-    if (view === 'month') setAnchorDate(a.subtract(1, 'month').toDate());
-    else setAnchorDate(a.subtract(daysCount, 'day').toDate());
-  };
-
-  const goNext = () => {
-    const a = dayjs(anchorDate);
-    if (view === 'month') setAnchorDate(a.add(1, 'month').toDate());
-    else setAnchorDate(a.add(daysCount, 'day').toDate());
-  };
-
-  const hours = useMemo(
-    () => Array.from({ length: HOURS_END - HOURS_START + 1 }, (_, i) => HOURS_START + i),
-    []
+function buildLayoutForDay(dayEvents: CalEvent[], dayWidth: number): LayoutEvent[] {
+  const sorted = [...dayEvents].sort(
+    (a, b) => dayjs(a.start).valueOf() - dayjs(b.start).valueOf(),
   );
 
-  function eventLayout(ev: { start: Date; end: Date }) {
-    if (view !== 'days') return null;
+  const columns: CalEvent[][] = [];
+  const eventColumnIndex = new Map<string, number>();
 
-    const start = dayjs(ev.start);
-    const end = dayjs(ev.end);
+  for (const event of sorted) {
+    let placed = false;
 
-    const dayIndex = shownDays.findIndex((d) => d.isSame(start, 'day'));
-    if (dayIndex === -1) return null;
+    for (let i = 0; i < columns.length; i += 1) {
+      const last = columns[i][columns[i].length - 1];
+      if (!overlaps(last, event)) {
+        columns[i].push(event);
+        eventColumnIndex.set(event.id, i);
+        placed = true;
+        break;
+      }
+    }
 
-    const startMinutes = start.hour() * 60 + start.minute();
-    const endMinutes = end.hour() * 60 + end.minute();
-
-    const topMinutes = clamp(startMinutes - HOURS_START * 60, 0, (HOURS_END - HOURS_START) * 60);
-    const heightMinutes = clamp(endMinutes - startMinutes, 24, (HOURS_END - HOURS_START) * 60);
-
-    const top = (topMinutes / 60) * HOUR_HEIGHT;
-    const height = (heightMinutes / 60) * HOUR_HEIGHT;
-
-    const left = LEFT_GUTTER + dayIndex * dayColumnWidth + 6;
-    const w = dayColumnWidth - 12;
-
-    return { top, height, left, width: w };
+    if (!placed) {
+      columns.push([event]);
+      eventColumnIndex.set(event.id, columns.length - 1);
+    }
   }
 
-  const todayIndex = useMemo(() => {
-    if (view !== 'days') return -1;
-    const t = dayjs();
-    return shownDays.findIndex((d) => d.isSame(t, 'day'));
-  }, [view, shownDays]);
+  const totalColumns = Math.max(1, columns.length);
+  const gap = 4;
+  const width = (dayWidth - gap * (totalColumns - 1)) / totalColumns;
 
-  const onPressDayHeader = (idx: number) => {
-    const day = shownDays[idx];
+  return sorted.map((event) => {
+    const column = eventColumnIndex.get(event.id) ?? 0;
+    return {
+      event,
+      top: getEventTop(event),
+      height: getEventHeight(event),
+      left: column * (width + gap),
+      width,
+    };
+  });
+}
 
-    if (view === 'days' && daysCount === 1 && day.isSame(dayjs(anchorDate), 'day')) {
-      setDaysCount(4);
-      return;
-    }
+function getTinyTitle(title: string) {
+  const words = title.trim().split(/\s+/).filter(Boolean);
+  if (words.length >= 2) {
+    return words
+      .slice(0, 2)
+      .map((word) => word[0]?.toUpperCase() ?? '')
+      .join('');
+  }
+  return title.slice(0, 3).toUpperCase();
+}
 
-    setAnchorDate(day.toDate());
-    setView('days');
-    setDaysCount(1);
+function getEventPrimaryLabel(event: CalEvent, height: number) {
+  if (height < 26) return getTinyTitle(event.title);
+  if (height < 38) return event.title.length > 16 ? `${event.title.slice(0, 16)}…` : event.title;
+  return event.title;
+}
+
+function getEventSecondaryLabel(event: CalEvent, height: number) {
+  const preferred = event.description?.trim() || event.location?.trim() || '';
+  if (!preferred) return '';
+  if (height < 54) return '';
+  if (height < 74) return preferred.length > 18 ? `${preferred.slice(0, 18)}…` : preferred;
+  if (height < 96) return preferred.length > 34 ? `${preferred.slice(0, 34)}…` : preferred;
+  return preferred;
+}
+
+function getEventFontSize(height: number) {
+  if (height < 26) return 9;
+  if (height < 38) return 10;
+  if (height < 54) return 11;
+  return 12;
+}
+
+function getSubFontSize(height: number) {
+  return height < 74 ? 9 : 10;
+}
+
+function buildDefaultDateFromSlot(day: dayjs.Dayjs, hour: number) {
+  return day.hour(hour).minute(0).second(0).millisecond(0).toDate();
+}
+
+function HeaderButton({
+  label,
+  active,
+  onPress,
+}: {
+  label: string;
+  active?: boolean;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable onPress={onPress} style={[styles.headerBtn, active && styles.headerBtnActive]}>
+      <Text style={[styles.headerBtnText, active && styles.headerBtnTextActive]}>{label}</Text>
+    </Pressable>
+  );
+}
+
+export default function WeekCalendar() {
+  const now = useNow();
+  const { events, addEvent, updateEvent, deleteEvent } = useEvents();
+
+  const [mode, setMode] = useState<CalendarMode>('three');
+  const [anchorDate, setAnchorDate] = useState<Date>(new Date());
+
+  const [modalVisible, setModalVisible] = useState(false);
+  const [modalDefaultDate, setModalDefaultDate] = useState<Date>(new Date());
+  const [editingEvent, setEditingEvent] = useState<CalEvent | null>(null);
+
+  const dayCount = mode === 'day' ? 1 : 3;
+  const shownDays = useMemo(() => getShownDays(anchorDate, dayCount), [anchorDate, dayCount]);
+
+  const headerLabel = useMemo(() => {
+    if (mode === 'month') return dayjs(anchorDate).format('MMMM YYYY');
+    return formatHeaderLabel(shownDays);
+  }, [anchorDate, mode, shownDays]);
+
+  const hourLabels = useMemo(
+    () => Array.from({ length: HOUR_COUNT + 1 }, (_, index) => HOURS_START + index),
+    [],
+  );
+
+  const createFromSlot = (day: dayjs.Dayjs, hour: number) => {
+    setEditingEvent(null);
+    setModalDefaultDate(buildDefaultDateFromSlot(day, hour));
+    setModalVisible(true);
   };
 
-  const getChipVariant = (idx: number) => {
-    const isToday = idx === todayIndex;
-    const isActive = daysCount === 1 && idx === Math.floor(shownDays.length / 2);
-    if (isActive) return 'active';
-    if (isToday) return 'today';
-    return 'default';
+  const openExistingEvent = (event: CalEvent) => {
+    setEditingEvent(event);
+    setModalDefaultDate(event.start);
+    setModalVisible(true);
   };
 
-  const nowLine = useMemo(() => {
-    if (view !== 'days') return null;
-    if (todayIndex < 0) return null;
-
-    const n = dayjs(now);
-    const nowMinutes = n.hour() * 60 + n.minute();
-    const minMinutes = HOURS_START * 60;
-    const maxMinutes = HOURS_END * 60;
-
-    if (nowMinutes < minMinutes || nowMinutes > maxMinutes) return null;
-
-    const topMinutes = nowMinutes - minMinutes;
-    const top = (topMinutes / 60) * HOUR_HEIGHT;
-
-    const left = LEFT_GUTTER + todayIndex * dayColumnWidth;
-    const lineWidth = dayColumnWidth;
-
-    return { top, left, lineWidth };
-  }, [view, now, todayIndex, dayColumnWidth]);
-
-  // ✅ Pinch: reinzoomen => weniger Tage, rauszoomen => mehr Tage => >7 => month
-  const onPinchStateChange = (e: any) => {
-    if (e.nativeEvent.state !== State.END) return;
-
-    const scale = e.nativeEvent.scale as number;
-
-    if (scale > 1.10) {
-      if (view === 'month') {
-        setView('days');
-        setDaysCount(7);
-        return;
-      }
-      setDaysCount((c) => Math.max(1, c - 1));
-      return;
-    }
-
-    if (scale < 0.90) {
-      if (view === 'days') {
-        setDaysCount((c) => {
-          const next = c + 1;
-          if (next > 7) {
-            setView('month');
-            return c;
-          }
-          return next;
-        });
-      }
-    }
+  const moveRange = (direction: -1 | 1) => {
+    const amount = mode === 'month' ? 1 : mode === 'day' ? 1 : 3;
+    const unit = mode === 'month' ? 'month' : 'day';
+    setAnchorDate(dayjs(anchorDate).add(direction * amount, unit).toDate());
   };
 
-  const setViewFromPicker = (opt: (typeof VIEW_OPTIONS)[number]) => {
-    setViewPickerOpen(false);
-
-    if (opt.kind === 'month') {
-      setView('month');
-      return;
-    }
-
-    setView('days');
-    setDaysCount(opt.daysCount ?? 4);
-  };
+  const todayLine = useMemo(() => {
+    const nowValue = dayjs(now);
+    const hourFloat = nowValue.hour() + nowValue.minute() / 60;
+    if (hourFloat < HOURS_START || hourFloat > HOURS_END) return null;
+    return (hourFloat - HOURS_START) * HOUR_HEIGHT;
+  }, [now]);
 
   return (
     <SafeAreaView style={styles.safe}>
-      {/* Top bar */}
-      <View style={styles.topBar}>
-        <View style={{ flex: 1, paddingRight: 10 }}>
-          <Text style={styles.weekTitle} numberOfLines={1}>
-            {headerLabel}
-          </Text>
+      <View style={styles.container}>
+        <View style={styles.topCard}>
+          <View style={styles.topRow}>
+            <Text style={styles.screenTitle}>Kalender</Text>
 
-          <Pressable onPress={() => setViewPickerOpen(true)} style={styles.viewPickerBtn}>
-            <Text style={styles.subTitle}>{viewLabel}</Text>
-            <Text style={styles.caret}>▾</Text>
-          </Pressable>
-        </View>
-
-        <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
-          <Pressable onPress={goPrev} style={styles.iconBtn}>
-            <Text style={styles.iconBtnText}>‹</Text>
-          </Pressable>
-
-          <Pressable onPress={goToday} style={styles.todayPill}>
-            <Text style={styles.todayText}>HEUTE</Text>
-          </Pressable>
-
-          <Pressable onPress={goNext} style={styles.iconBtn}>
-            <Text style={styles.iconBtnText}>›</Text>
-          </Pressable>
-        </View>
-      </View>
-
-      {/* Dropdown */}
-      <Modal visible={viewPickerOpen} transparent animationType="fade">
-        <Pressable style={styles.pickerOverlay} onPress={() => setViewPickerOpen(false)}>
-          <View style={styles.pickerCard}>
-            <Text style={styles.pickerTitle}>Ansicht wählen</Text>
-            {VIEW_OPTIONS.map((opt) => (
-              <Pressable key={opt.key} onPress={() => setViewFromPicker(opt)} style={styles.pickerItem}>
-                <Text style={styles.pickerItemText}>{opt.label}</Text>
-              </Pressable>
-            ))}
+            <Pressable
+              onPress={() => {
+                setEditingEvent(null);
+                setModalDefaultDate(new Date());
+                setModalVisible(true);
+              }}
+              style={styles.addBtn}
+            >
+              <Text style={styles.addBtnText}>Neu</Text>
+            </Pressable>
           </View>
-        </Pressable>
-      </Modal>
 
-      <PinchGestureHandler onHandlerStateChange={onPinchStateChange}>
-        <View style={{ flex: 1 }}>
-          {view === 'month' ? (
-            <MonthView
-              monthDate={anchorDate}
-              onSelectDay={(d) => {
-                setAnchorDate(d);
-                setView('days');
-                setDaysCount(4);
+          <View style={styles.navRow}>
+            <Pressable onPress={() => moveRange(-1)} style={styles.arrowBtn}>
+              <Text style={styles.arrowText}>‹</Text>
+            </Pressable>
+
+            <View style={styles.titleWrap}>
+              <Text style={styles.rangeTitle}>{headerLabel}</Text>
+            </View>
+
+            <Pressable onPress={() => moveRange(1)} style={styles.arrowBtn}>
+              <Text style={styles.arrowText}>›</Text>
+            </Pressable>
+          </View>
+
+          <View style={styles.modeRow}>
+            <HeaderButton label="Monat" active={mode === 'month'} onPress={() => setMode('month')} />
+            <HeaderButton label="3 Tage" active={mode === 'three'} onPress={() => setMode('three')} />
+            <HeaderButton label="Tag" active={mode === 'day'} onPress={() => setMode('day')} />
+            <HeaderButton
+              label="Heute"
+              onPress={() => {
+                setAnchorDate(new Date());
+                if (mode === 'month') setMode('three');
               }}
             />
-          ) : (
-            <>
-              {/* Header row */}
-              <View style={[styles.headerRow, { paddingHorizontal: 16 }]}>
-                <View
-                  style={{
-                    width: LEFT_GUTTER,
-                    alignItems: 'flex-start',
-                    justifyContent: 'flex-end',
-                    paddingBottom: 6,
-                  }}
-                >
-                  <Text style={styles.yearText}>{yearLabel}</Text>
-                </View>
+          </View>
+        </View>
 
-                {shownDays.map((d, idx) => {
-                  const variant = getChipVariant(idx);
+        {mode === 'month' ? (
+          <View style={styles.monthWrap}>
+            <MonthView
+              monthDate={anchorDate}
+              onSelectDay={(date) => {
+                setAnchorDate(date);
+                setMode('day');
+              }}
+            />
+          </View>
+        ) : (
+          <ScrollView
+            style={styles.calendarScroll}
+            contentContainerStyle={styles.calendarContent}
+            showsVerticalScrollIndicator={false}
+          >
+            <View style={styles.dayHeaderRow}>
+              <View style={styles.timeHeaderSpacer} />
+              {shownDays.map((day) => {
+                const isToday = day.isSame(dayjs(), 'day');
 
-                  const dowStyle =
-                    variant === 'today'
-                      ? [styles.dow, styles.dowToday]
-                      : variant === 'active'
-                      ? [styles.dow, styles.dowActive]
-                      : [styles.dow];
+                return (
+                  <View key={day.format('YYYY-MM-DD')} style={styles.dayHeaderCell}>
+                    <Text style={[styles.dayHeaderTop, isToday && styles.dayHeaderTopToday]}>
+                      {day.format('dd').toUpperCase()}.
+                    </Text>
+                    <Text style={[styles.dayHeaderBottom, isToday && styles.dayHeaderBottomToday]}>
+                      {day.format('D')}
+                    </Text>
+                  </View>
+                );
+              })}
+            </View>
 
-                  const chipStyle =
-                    variant === 'today'
-                      ? [styles.dayChip, styles.dayChipToday]
-                      : variant === 'active'
-                      ? [styles.dayChip, styles.dayChipActive]
-                      : [styles.dayChip];
+            <View style={styles.bodyRow}>
+              <View style={styles.timeColumn}>
+                {hourLabels.slice(0, -1).map((hour) => (
+                  <View key={hour} style={styles.timeSlot}>
+                    <Text style={styles.timeLabel}>{`${String(hour).padStart(2, '0')}:00`}</Text>
+                  </View>
+                ))}
+              </View>
 
-                  const chipTextStyle =
-                    variant === 'today'
-                      ? [styles.dayChipText, styles.dayChipTextOnDark]
-                      : [styles.dayChipText];
+              <View style={styles.daysArea}>
+                {shownDays.map((day) => {
+                  const key = day.format('YYYY-MM-DD');
+                  const dayEvents = events.filter((event) => dayjs(event.start).isSame(day, 'day'));
+                  const dayWidthPercent = 100 / shownDays.length;
+                  const layout = buildLayoutForDay(dayEvents, 1);
 
                   return (
-                    <Pressable
-                      key={d.toString()}
-                      onPress={() => onPressDayHeader(idx)}
-                      style={{ width: dayColumnWidth, alignItems: 'center' }}
+                    <View
+                      key={key}
+                      style={[
+                        styles.dayColumn,
+                        shownDays.length > 1 && { width: `${dayWidthPercent}%` },
+                      ]}
                     >
-                      <Text style={dowStyle}>{d.format('ddd').toUpperCase()}</Text>
-                      <View style={chipStyle}>
-                        <Text style={chipTextStyle}>{d.format('D')}</Text>
-                      </View>
-                    </Pressable>
+                      {hourLabels.slice(0, -1).map((hour) => (
+                        <Pressable
+                          key={`${key}_${hour}`}
+                          onPress={() => createFromSlot(day, hour)}
+                          style={styles.hourCell}
+                        >
+                          <View style={styles.hourLine} />
+                        </Pressable>
+                      ))}
+
+                      {dayjs(now).isSame(day, 'day') && todayLine !== null ? (
+                        <View style={[styles.nowLineWrap, { top: todayLine }]}>
+                          <View style={styles.nowDot} />
+                          <View style={styles.nowLine} />
+                        </View>
+                      ) : null}
+
+                      {layout.map(({ event, top, height, left, width }) => {
+                        const primary = getEventPrimaryLabel(event, height);
+                        const secondary = getEventSecondaryLabel(event, height);
+                        const fontSize = getEventFontSize(height);
+                        const subFontSize = getSubFontSize(height);
+                        const compact = height < 30;
+
+                        return (
+                          <Pressable
+                            key={event.id}
+                            onPress={() => openExistingEvent(event)}
+                            style={[
+                              styles.eventCard,
+                              {
+                                top,
+                                left: `${left * 100}%`,
+                                width: `${width * 100}%`,
+                                height,
+                                borderLeftColor: event.color || ACCENT_GOLD,
+                              },
+                            ]}
+                          >
+                            <Text
+                              numberOfLines={compact ? 1 : 2}
+                              style={[
+                                styles.eventTitle,
+                                { fontSize, lineHeight: fontSize + 2 },
+                              ]}
+                            >
+                              {primary}
+                            </Text>
+
+                            {secondary ? (
+                              <Text
+                                numberOfLines={height < 96 ? 1 : 2}
+                                style={[
+                                  styles.eventSub,
+                                  { fontSize: subFontSize, lineHeight: subFontSize + 2 },
+                                ]}
+                              >
+                                {secondary}
+                              </Text>
+                            ) : null}
+
+                            {height >= 54 ? (
+                              <Text style={styles.eventTime}>
+                                {dayjs(event.start).format('HH:mm')}–{dayjs(event.end).format('HH:mm')}
+                              </Text>
+                            ) : null}
+                          </Pressable>
+                        );
+                      })}
+                    </View>
                   );
                 })}
               </View>
+            </View>
+          </ScrollView>
+        )}
 
-              {/* Grid */}
-              <ScrollView
-                style={{ flex: 1 }}
-                contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 18 }}
-                showsVerticalScrollIndicator={false}
-                decelerationRate="fast"
-                scrollEventThrottle={16}
-              >
-                <View style={[styles.grid, { width: contentWidth }]}>
-                  {hours.map((h) => (
-                    <View key={h} style={[styles.hourRow, { height: HOUR_HEIGHT }]}>
-                      <View style={{ width: LEFT_GUTTER, paddingRight: 10, paddingTop: GRID_LINE_OFFSET - 8 }}>
-                        <Text style={styles.hourText}>{dayjs().hour(h).minute(0).format('HH:mm')}</Text>
-                      </View>
-
-                      <View style={{ flexDirection: 'row', flex: 1 }}>
-                        {shownDays.map((_, idx) => (
-                          <View key={idx} style={[styles.dayCol, { width: dayColumnWidth }]} />
-                        ))}
-                      </View>
-
-                      <View style={[styles.hourLine, { top: GRID_LINE_OFFSET }]} />
-                    </View>
-                  ))}
-
-                  {/* Overlay */}
-                  <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
-                    {/* ✅ Today column glow (Apple-like, faux gradient) */}
-                    {todayIndex >= 0 && (
-                      <>
-                        <View
-                          pointerEvents="none"
-                          style={[
-                            styles.todayGlowOuter,
-                            {
-                              left: LEFT_GUTTER + todayIndex * dayColumnWidth - 14,
-                              width: dayColumnWidth + 28,
-                            },
-                          ]}
-                        />
-                        <View
-                          pointerEvents="none"
-                          style={[
-                            styles.todayGlowInner,
-                            {
-                              left: LEFT_GUTTER + todayIndex * dayColumnWidth,
-                              width: dayColumnWidth,
-                            },
-                          ]}
-                        />
-                      </>
-                    )}
-
-                    {nowLine && (
-                      <View
-                        style={[
-                          styles.nowLineWrap,
-                          { top: nowLine.top + GRID_LINE_OFFSET, left: nowLine.left, width: nowLine.lineWidth },
-                        ]}
-                        pointerEvents="none"
-                      >
-                        <View style={styles.nowDot} />
-                        <View style={styles.nowLine} />
-                      </View>
-                    )}
-
-                    {events.map((ev) => {
-                      const pos = eventLayout(ev);
-                      if (!pos) return null;
-
-                      const showTime = pos.height >= 64 && pos.width >= 88;
-                      const showLocation = pos.height >= 84 && pos.width >= 110;
-
-                      return (
-                        <Pressable
-                          key={ev.id}
-                          onPress={() => {
-                            setEditingEvent(ev);
-                            setModalVisible(true);
-                          }}
-                          style={({ pressed }) => [
-                            styles.event,
-                            {
-                              left: pos.left,
-                              top: pos.top + GRID_LINE_OFFSET,
-                              height: pos.height,
-                              width: pos.width,
-                              borderLeftColor: ev.color,
-                              transform: [{ scale: pressed ? 0.985 : 1 }],
-                            },
-                          ]}
-                        >
-                          <Text numberOfLines={2} style={styles.eventTitle}>
-                            {ev.title}
-                          </Text>
-
-                          {showTime && (
-                            <View style={{ marginTop: 6 }}>
-                              <Text style={styles.eventTimeSmall}>{dayjs(ev.start).format('HH:mm')}</Text>
-                              <Text style={styles.eventTimeSmall}>{dayjs(ev.end).format('HH:mm')}</Text>
-                            </View>
-                          )}
-
-                          {showLocation && !!ev.location && (
-                            <Text numberOfLines={1} style={styles.eventLocation}>
-                              {ev.location}
-                            </Text>
-                          )}
-                        </Pressable>
-                      );
-                    })}
-                  </View>
-                </View>
-              </ScrollView>
-
-              <Pressable
-                onPress={() => {
-                  setEditingEvent(null);
-                  setModalVisible(true);
-                }}
-                style={styles.fab}
-              >
-                <Text style={styles.fabPlus}>＋</Text>
-              </Pressable>
-
-              <EventModal
-                visible={modalVisible}
-                onClose={() => setModalVisible(false)}
-                onCreate={addEvent}
-                onUpdate={updateEvent}
-                onDelete={deleteEvent}
-                defaultDate={anchorDate}
-                initialEvent={editingEvent}
-              />
-            </>
-          )}
-        </View>
-      </PinchGestureHandler>
+        <EventModal
+          visible={modalVisible}
+          onClose={() => {
+            setModalVisible(false);
+            setEditingEvent(null);
+          }}
+          defaultDate={modalDefaultDate}
+          initialEvent={editingEvent}
+          onCreate={addEvent}
+          onUpdate={updateEvent}
+          onDelete={deleteEvent}
+        />
+      </View>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: THEME.bg },
-
-  topBar: {
-    backgroundColor: THEME.bgDark,
-    paddingHorizontal: 16,
-    paddingTop: 10,
-    paddingBottom: 12,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  weekTitle: { fontSize: 20, fontWeight: '900', color: THEME.text },
-
-  viewPickerBtn: {
-    marginTop: 6,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    alignSelf: 'flex-start',
-    paddingVertical: 6,
-    paddingHorizontal: 10,
-    borderRadius: 999,
-    backgroundColor: 'rgba(255,255,255,0.08)',
-    borderWidth: 1,
-    borderColor: THEME.border,
-  },
-  subTitle: { fontSize: 12, fontWeight: '900', color: THEME.muted },
-  caret: { fontSize: 12, fontWeight: '900', color: THEME.muted, marginTop: -1 },
-
-  iconBtn: {
-    width: 34,
-    height: 34,
-    borderRadius: 999,
-    backgroundColor: 'rgba(255,255,255,0.08)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: THEME.border,
-  },
-  iconBtnText: { fontSize: 20, fontWeight: '900', color: 'rgba(255,255,255,0.92)', marginTop: -2 },
-
-  todayPill: {
-    paddingHorizontal: 14,
-    height: 34,
-    borderRadius: 999,
-    backgroundColor: ACCENT_GOLD,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  todayText: { color: '#0B1636', fontWeight: '900', letterSpacing: 0.4 },
-
-  pickerOverlay: {
+  safe: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.55)',
-    justifyContent: 'center',
-    padding: 16,
+    backgroundColor: THEME.bg,
   },
-  pickerCard: {
-    backgroundColor: '#0F2454',
-    borderRadius: 18,
-    padding: 14,
-    borderWidth: 1,
-    borderColor: THEME.border,
+  container: {
+    flex: 1,
+    backgroundColor: THEME.bg,
   },
-  pickerTitle: { fontSize: 14, fontWeight: '900', color: THEME.text, marginBottom: 10 },
-  pickerItem: { paddingVertical: 12, paddingHorizontal: 10, borderRadius: 12 },
-  pickerItemText: { fontSize: 14, fontWeight: '900', color: 'rgba(255,255,255,0.92)' },
-
-  headerRow: { paddingBottom: 8, flexDirection: 'row', alignItems: 'flex-end' },
-  yearText: { fontSize: 12, fontWeight: '900', color: THEME.muted },
-
-  dow: { fontSize: 11, fontWeight: '900', color: THEME.muted },
-  dowToday: { color: ACCENT_GOLD },
-  dowActive: { color: 'rgba(255,255,255,0.95)' },
-
-  dayChip: {
-    marginTop: 6,
-    width: 30,
-    height: 30,
-    borderRadius: 10,
-    backgroundColor: 'rgba(255,255,255,0.06)',
-    borderWidth: 1,
-    borderColor: THEME.border,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  dayChipToday: { backgroundColor: ACCENT_GOLD, borderColor: ACCENT_GOLD },
-  dayChipActive: { backgroundColor: 'rgba(255,255,255,0.08)', borderColor: 'rgba(255,255,255,0.40)' },
-
-  dayChipText: { fontWeight: '900', color: 'rgba(255,255,255,0.92)' },
-  dayChipTextOnDark: { color: '#0B1636' },
-
-  grid: { position: 'relative' },
-
-  hourRow: { position: 'relative', flexDirection: 'row', alignItems: 'flex-start' },
-  hourText: { fontSize: 10, color: 'rgba(255,255,255,0.55)', fontWeight: '900' },
-
-  dayCol: { borderLeftWidth: 1, borderLeftColor: THEME.grid },
-
-  hourLine: {
-    position: 'absolute',
-    left: LEFT_GUTTER,
-    right: 0,
-    height: 1,
-    backgroundColor: THEME.grid,
-  },
-
-  // Today glow layers
-  todayGlowOuter: {
-    position: 'absolute',
-    top: 0,
-    bottom: 0,
-    backgroundColor: 'rgba(212,175,55,0.06)',
-    borderRadius: 18,
-  },
-  todayGlowInner: {
-    position: 'absolute',
-    top: 0,
-    bottom: 0,
-    backgroundColor: 'rgba(212,175,55,0.10)',
-    borderRadius: 14,
-  },
-
-  nowLineWrap: {
-    position: 'absolute',
-    height: 10,
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingLeft: 6,
-    paddingRight: 6,
-  },
-  nowDot: { width: 8, height: 8, borderRadius: 99, backgroundColor: ACCENT_GOLD, marginRight: 6 },
-  nowLine: { height: 2, flex: 1, backgroundColor: ACCENT_GOLD, borderRadius: 99 },
-
-  // ✅ Premium floating cards
-  event: {
-    position: 'absolute',
-    borderRadius: 12,
+  topCard: {
+    backgroundColor: THEME.bgDark,
+    marginHorizontal: 12,
+    marginTop: 10,
+    marginBottom: 6,
+    borderRadius: 22,
     paddingHorizontal: 12,
     paddingVertical: 10,
-    backgroundColor: THEME.cardDark,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
-    borderLeftWidth: 4,
-    shadowColor: '#000',
-    shadowOpacity: 0.28,
-    shadowRadius: 14,
-    shadowOffset: { width: 0, height: 10 },
-    elevation: 6,
-    overflow: 'hidden',
+    borderColor: THEME.border,
   },
-  eventTitle: { fontWeight: '900', color: THEME.text, fontSize: 13 },
-  eventTimeSmall: { fontSize: 11, color: 'rgba(255,255,255,0.78)', fontWeight: '900', lineHeight: 13 },
-  eventLocation: { marginTop: 4, fontSize: 11, color: 'rgba(255,255,255,0.62)', fontWeight: '800' },
-
-  fab: {
-    position: 'absolute',
-    right: 18,
-    bottom: 18,
-    width: 56,
-    height: 56,
-    borderRadius: 18,
+  topRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  screenTitle: {
+    color: THEME.text,
+    fontSize: 26,
+    fontWeight: '900',
+  },
+  addBtn: {
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 16,
     backgroundColor: ACCENT_GOLD,
+  },
+  addBtnText: {
+    color: '#0B1636',
+    fontWeight: '900',
+    fontSize: 15,
+  },
+  navRow: {
+    marginTop: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  arrowBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 14,
+    backgroundColor: 'rgba(255,255,255,0.08)',
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: '#000',
-    shadowOpacity: 0.30,
-    shadowRadius: 14,
-    shadowOffset: { width: 0, height: 10 },
-    elevation: 8,
   },
-  fabPlus: { color: '#0B1636', fontSize: 28, fontWeight: '900', marginTop: -2 },
+  arrowText: {
+    color: THEME.text,
+    fontSize: 24,
+    fontWeight: '900',
+    lineHeight: 24,
+  },
+  titleWrap: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  rangeTitle: {
+    color: THEME.text,
+    fontSize: 16,
+    fontWeight: '900',
+    textAlign: 'center',
+  },
+  modeRow: {
+    marginTop: 10,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  headerBtn: {
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    borderRadius: 999,
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    borderWidth: 1,
+    borderColor: THEME.border,
+  },
+  headerBtnActive: {
+    backgroundColor: 'rgba(212,175,55,0.16)',
+    borderColor: 'rgba(212,175,55,0.24)',
+  },
+  headerBtnText: {
+    color: THEME.text,
+    fontWeight: '800',
+    fontSize: 12,
+  },
+  headerBtnTextActive: {
+    color: ACCENT_GOLD,
+  },
+  monthWrap: {
+    flex: 1,
+    paddingHorizontal: 14,
+    paddingBottom: 14,
+  },
+  calendarScroll: {
+    flex: 1,
+  },
+  calendarContent: {
+    paddingHorizontal: 8,
+    paddingBottom: 28,
+  },
+  dayHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'stretch',
+    marginBottom: 4,
+  },
+  timeHeaderSpacer: {
+    width: LEFT_GUTTER_COMPACT,
+  },
+  dayHeaderCell: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 4,
+  },
+  dayHeaderTop: {
+    color: THEME.muted,
+    fontSize: 11,
+    fontWeight: '900',
+  },
+  dayHeaderTopToday: {
+    color: ACCENT_GOLD,
+  },
+  dayHeaderBottom: {
+    marginTop: 2,
+    color: THEME.text,
+    fontSize: 16,
+    fontWeight: '900',
+  },
+  dayHeaderBottomToday: {
+    color: ACCENT_GOLD,
+  },
+  bodyRow: {
+    flexDirection: 'row',
+  },
+  timeColumn: {
+    width: LEFT_GUTTER_COMPACT,
+    height: BODY_HEIGHT,
+    paddingRight: 2,
+  },
+  timeSlot: {
+    height: HOUR_HEIGHT,
+    justifyContent: 'flex-start',
+    alignItems: 'flex-start',
+  },
+  timeLabel: {
+    color: THEME.muted,
+    fontSize: 10,
+    fontWeight: '800',
+    transform: [{ translateY: -7 }],
+  },
+  daysArea: {
+    flex: 1,
+    flexDirection: 'row',
+    height: BODY_HEIGHT,
+    borderTopWidth: 1,
+    borderColor: THEME.grid,
+  },
+  dayColumn: {
+    flex: 1,
+    position: 'relative',
+    borderLeftWidth: 1,
+    borderColor: THEME.grid,
+    overflow: 'hidden',
+  },
+  hourCell: {
+    height: HOUR_HEIGHT,
+  },
+  hourLine: {
+    borderTopWidth: 1,
+    borderColor: THEME.grid,
+    width: '100%',
+  },
+  nowLineWrap: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    zIndex: 15,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  nowDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 99,
+    backgroundColor: '#FF7C7C',
+    marginLeft: 2,
+  },
+  nowLine: {
+    flex: 1,
+    height: 2,
+    backgroundColor: '#FF7C7C',
+    marginLeft: 4,
+  },
+  eventCard: {
+    position: 'absolute',
+    paddingHorizontal: 6,
+    paddingVertical: 4,
+    borderRadius: 10,
+    backgroundColor: 'rgba(255,255,255,0.10)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.12)',
+    borderLeftWidth: 4,
+    overflow: 'hidden',
+    zIndex: 20,
+  },
+  eventTitle: {
+    color: THEME.text,
+    fontWeight: '900',
+  },
+  eventSub: {
+    color: 'rgba(255,255,255,0.82)',
+    fontWeight: '700',
+    marginTop: 2,
+  },
+  eventTime: {
+    marginTop: 3,
+    color: ACCENT_GOLD,
+    fontSize: 9,
+    fontWeight: '800',
+  },
 });

@@ -1,8 +1,10 @@
 export type Category = {
   id: string;
   name: string;
-  color: string; // Akzentfarbe
+  color: string;
 };
+
+export type TaskPriority = 'low' | 'medium' | 'high';
 
 export type Task = {
   id: string;
@@ -11,9 +13,14 @@ export type Task = {
   done: boolean;
   createdAt: number;
 
-  // Reminder
   reminderEnabled?: boolean;
-  reminderId?: string | null; // expo notification id
+  reminderId?: string | null;
+
+  doneAt?: number | null;
+  note?: string;
+  subcategory?: string | null;
+  linkedGoalId?: string | null;
+  priority?: TaskPriority;
 };
 
 export type TodoState = {
@@ -21,4 +28,3 @@ export type TodoState = {
   categories: Category[];
   tasks: Task[];
 };
-

@@ -1,9 +1,22 @@
+export type HabitCadence = 'daily' | 'selected_days' | 'weekly' | 'monthly';
+
 export type Habit = {
   id: string;
   title: string;
-  color: string;      // Akzentfarbe
-  targetPerDay: number; // z.B. 1 (einmal täglich) oder 2 (zweimal)
-  checkins: Record<string, number>; // key: YYYY-MM-DD, value: count
+  color: string;
+
+  targetPerDay: number;
+  checkins: Record<string, number>;
+
+  description?: string;
+  subcategory?: string | null;
+  linkedGoalId?: string | null;
+
+  cadence?: HabitCadence;
+  targetCount?: number;
+  weekdays?: number[];
+  dayOfMonth?: number | null;
+  durationMinutes?: number | null;
 };
 
 export type HabitState = {

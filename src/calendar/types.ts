@@ -5,6 +5,7 @@ export type CalEvent = {
   end: Date;
   color: string;
   location?: string;
+  description?: string;
 };
 
 export type ViewMode = 'three' | 'day';

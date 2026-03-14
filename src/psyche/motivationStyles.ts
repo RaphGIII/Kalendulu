@@ -1,83 +1,61 @@
 import { MotivationStyleId, PsycheReflection, PsycheSignals, MindsetProfile } from './types';
 
-type RenderCtx = {
-  profile: MindsetProfile;
-  signals: PsycheSignals;
-  highlight: string;
-  risk: string | null;
+type ReflectionContext = {
+  style: MotivationStyleId;
   microAction: string;
-  intensity: 1 | 2 | 3;
+  signals: PsycheSignals;
+  profile: MindsetProfile;
 };
 
-function punch(intensity: 1 | 2 | 3) {
-  if (intensity === 1) return '';
-  if (intensity === 2) return '  ';
-  return '   ';
-}
+export function buildMotivationReflection(ctx: ReflectionContext): PsycheReflection {
+  const baseTitle = 'Bleib im Rhythmus.';
+  const momentum = ctx.signals.momentum7d;
+  const consistency = ctx.profile.consistency;
 
-export function renderReflection(style: MotivationStyleId, ctx: RenderCtx): PsycheReflection {
-  const p = ctx.profile;
-  const tagBase = [
-    p.discipline >= 70 ? 'Disziplin' : null,
-    p.consistency >= 70 ? 'Konstanz' : null,
-    p.focus >= 70 ? 'Fokus' : null,
-    p.planning >= 70 ? 'Struktur' : null,
-    p.recovery >= 70 ? 'Balance' : null,
-    p.momentum >= 70 ? 'Momentum' : null,
-  ].filter(Boolean) as string[];
-
-  const baseTitle =
-    p.momentum >= 70 ? 'Du bist im Momentum' :
-    p.discipline >= 70 ? 'Du baust echte Disziplin' :
-    'Heute zählt der nächste Schritt';
-
-  const riskLine = ctx.risk ? `\n\nAchte darauf: ${ctx.risk}` : '';
-
-  if (style === 'winner') {
+  if (ctx.style === 'winner') {
     return {
       title: baseTitle,
-      body:
-        `Das ist nicht Glück. Das ist Charakter.` +
-        `\n\n${ctx.highlight}` +
-        riskLine +
-        `\n\n${punch(ctx.intensity)}Du bist nicht hier, um zu “versuchen”. Du bist hier, um durchzuziehen.`,
-      microAction: ctx.microAction,
-      tags: tagBase.length ? tagBase : ['Winner Mode'],
+      message:
+        momentum >= 60
+          ? 'Du bist gerade in Bewegung. Halt den Lauf am Leben.'
+          : 'Nicht diskutieren, liefern. Mach den nächsten klaren Schritt.',
+      body: 'Gewinnen entsteht aus wiederholter Umsetzung, nicht aus perfekter Stimmung.',
+      action: ctx.microAction,
+      tone: 'winner',
     };
   }
 
-  if (style === 'coach') {
+  if (ctx.style === 'coach') {
     return {
       title: 'Kurzes Feedback für dich',
-      body:
-        `${ctx.highlight}` +
-        riskLine +
-        `\n\nEin Schritt reicht. Hauptsache: dran bleiben.`,
-      microAction: ctx.microAction,
-      tags: tagBase.length ? tagBase : ['Coach'],
+      message:
+        consistency >= 60
+          ? 'Deine Basis ist da. Jetzt zählt der nächste saubere Schritt.'
+          : 'Du brauchst keinen perfekten Tag, sondern einen ehrlichen Neustart.',
+      body: 'Ein kleiner umgesetzter Schritt schlägt langes Nachdenken.',
+      action: ctx.microAction,
+      tone: 'coach',
     };
   }
 
-  if (style === 'stoic') {
+  if (ctx.style === 'stoic') {
     return {
       title: 'Ruhe. Klarheit. Aktion.',
-      body:
-        `${ctx.highlight}` +
-        (ctx.risk ? `\n\nGrenze: ${ctx.risk}` : '') +
-        `\n\nHandle klein. Handle jetzt.`,
-      microAction: ctx.microAction,
-      tags: tagBase.length ? tagBase : ['Stoic'],
+      message: 'Konzentrier dich auf das, was du jetzt direkt beeinflussen kannst.',
+      body: 'Nicht alles lösen. Den nächsten sinnvollen Schritt lösen.',
+      action: ctx.microAction,
+      tone: 'stoic',
     };
   }
 
-  // friend
   return {
     title: 'Ich seh dich.',
-    body:
-      `${ctx.highlight}` +
-      riskLine +
-      `\n\nDu musst heute nicht perfekt sein. Nur echt.`,
-    microAction: ctx.microAction,
-    tags: tagBase.length ? tagBase : ['Support'],
+    message:
+      momentum >= 50
+        ? 'Du bist näher dran, als du denkst. Bleib dran.'
+        : 'Starte klein, aber starte wirklich.',
+    body: 'Fortschritt entsteht, wenn du heute wieder auftauchst.',
+    action: ctx.microAction,
+    tone: ctx.style,
   };
 }

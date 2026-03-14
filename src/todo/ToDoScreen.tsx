@@ -1,18 +1,19 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  View,
-  Text,
-  StyleSheet,
-  Pressable,
-  ScrollView,
-  Modal,
-  TextInput,
+  Alert,
   Animated,
+  Modal,
+  Pressable,
+  SafeAreaView,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+
 import { useTodo } from './useTodo';
-import CategoryManagerModal from './CategoryManagerModal';
-import { configureAndroidChannel, ensureNotificationPermission } from './notifications';
 
 const BG = '#2E437A';
 const BG_DARK = '#233A73';
@@ -21,388 +22,737 @@ const CARD_DARK = '#162E63';
 const TEXT = '#FFFFFF';
 const MUTED = 'rgba(255,255,255,0.72)';
 const BORDER = 'rgba(255,255,255,0.10)';
-
 const GOLD = '#D4AF37';
-const SILVER = '#C0C0C0';
+
+function priorityLabel(priority?: 'low' | 'medium' | 'high') {
+  if (priority === 'high') return 'Hoch';
+  if (priority === 'low') return 'Niedrig';
+  return 'Mittel';
+}
 
 export default function ToDoScreen() {
   const {
     state,
     activeCategoryId,
     setActiveCategoryId,
+    showCompleted,
+    setShowCompleted,
     categoriesWithCounts,
-    filteredTasks,
+    openTasks,
+    completedTasks,
     addTask,
+    deleteTask,
     toggleTaskDone,
     toggleTaskReminder,
+    clearCompletedTasks,
     addCategory,
-    renameCategory,
-    recolorCategory,
-    deleteCategory,
   } = useTodo();
 
-  // Notifications master toggle (nur Glocke)
-  const [notificationsEnabled, setNotificationsEnabled] = useState(false);
+  const [addOpen, setAddOpen] = useState(false);
+  const [categoryOpen, setCategoryOpen] = useState(false);
+
+  const [title, setTitle] = useState('');
+  const [note, setNote] = useState('');
+  const [subcategory, setSubcategory] = useState('');
+  const [priority, setPriority] = useState<'low' | 'medium' | 'high'>('medium');
+  const [catId, setCatId] = useState(state.categories[0]?.id ?? 'business');
+
+  const [newCategoryName, setNewCategoryName] = useState('');
+  const [newCategoryColor, setNewCategoryColor] = useState(GOLD);
+
+  const glow = useRef(new Animated.Value(0.65)).current;
 
   useEffect(() => {
-    configureAndroidChannel();
-  }, []);
+    Animated.loop(
+      Animated.sequence([
+        Animated.timing(glow, {
+          toValue: 1,
+          duration: 900,
+          useNativeDriver: true,
+        }),
+        Animated.timing(glow, {
+          toValue: 0.65,
+          duration: 900,
+          useNativeDriver: true,
+        }),
+      ]),
+    ).start();
+  }, [glow]);
 
   const accentColor = useMemo(() => {
-    if (activeCategoryId) return state.categories.find((c) => c.id === activeCategoryId)?.color ?? GOLD;
+    if (activeCategoryId) {
+      return state.categories.find((category) => category.id === activeCategoryId)?.color ?? GOLD;
+    }
     return state.categories[0]?.color ?? GOLD;
   }, [activeCategoryId, state.categories]);
 
-  // FAB pulsing glow
-  const pulse = useRef(new Animated.Value(0)).current;
-  useEffect(() => {
-    const loop = Animated.loop(
-      Animated.sequence([
-        Animated.timing(pulse, { toValue: 1, duration: 1400, useNativeDriver: true }),
-        Animated.timing(pulse, { toValue: 0, duration: 1400, useNativeDriver: true }),
-      ])
-    );
-    loop.start();
-    return () => loop.stop();
-  }, [pulse]);
-
-  const glowScale = pulse.interpolate({ inputRange: [0, 1], outputRange: [1, 1.18] });
-  const glowOpacity = pulse.interpolate({ inputRange: [0, 1], outputRange: [0.25, 0.45] });
-
-  // Add task modal
-  const [addOpen, setAddOpen] = useState(false);
-  const [title, setTitle] = useState('');
-  const [catId, setCatId] = useState(state.categories[0]?.id ?? 'business');
-
-  // Category edit modal
-  const [catEditOpen, setCatEditOpen] = useState(false);
+  const visibleTasks = showCompleted ? [...openTasks, ...completedTasks] : openTasks;
 
   const submit = () => {
-    const t = title.trim();
-    if (!t) return;
-    addTask(t, catId);
+    const trimmedTitle = title.trim();
+    if (!trimmedTitle) return;
+
+    addTask({
+      title: trimmedTitle,
+      categoryId: catId,
+      note,
+      subcategory,
+      priority,
+    });
+
     setTitle('');
+    setNote('');
+    setSubcategory('');
+    setPriority('medium');
     setAddOpen(false);
   };
 
-  const toggleBell = async () => {
-    if (!notificationsEnabled) {
-      const ok = await ensureNotificationPermission();
-      if (!ok) return;
-      setNotificationsEnabled(true);
-      return;
-    }
-    setNotificationsEnabled(false);
+  const submitCategory = () => {
+    const trimmed = newCategoryName.trim();
+    if (!trimmed) return;
+
+    addCategory(trimmed, newCategoryColor);
+    setNewCategoryName('');
+    setNewCategoryColor(GOLD);
+    setCategoryOpen(false);
   };
 
   return (
-    <View style={{ flex: 1, backgroundColor: BG }}>
-      {/* Header */}
-      <View style={styles.headerTop}>
-        <View style={styles.headerRow}>
-          <View style={{ flex: 1 }} />
-
-          <Pressable onPress={toggleBell} style={styles.headerIcon}>
-            <Ionicons
-              name={notificationsEnabled ? 'notifications' : 'notifications-outline'}
-              size={18}
-              color="rgba(255,255,255,0.92)"
-            />
-          </Pressable>
+    <SafeAreaView style={styles.safe}>
+      <ScrollView contentContainerStyle={styles.content}>
+        <View style={styles.header}>
+          <Text style={styles.title}>Todos</Text>
         </View>
 
-        <Text style={styles.title}>What’s up, {state.name}!</Text>
-      </View>
+        <View style={styles.card}>
+          <View style={styles.rowBetween}>
+            <Text style={styles.sectionTitle}>Kategorien</Text>
 
-      <ScrollView contentContainerStyle={{ padding: 18, paddingBottom: 140 }}>
-        {/* Categories row with gold/silver + edit */}
-        <View style={styles.sectionRow}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-            <Text style={styles.section}>CATEGORIES</Text>
+            <View style={styles.headerRightRow}>
+              <Pressable onPress={() => setCategoryOpen(true)} style={styles.categoryAddBtn}>
+                <Ionicons name="add" size={16} color={GOLD} />
+                <Text style={styles.categoryAddBtnText}>Neue Kategorie</Text>
+              </Pressable>
 
-            <View style={styles.metalPill}>
-              <View style={[styles.metalDot, { backgroundColor: GOLD }]} />
-              <Text style={styles.metalText}>Gold</Text>
-            </View>
-
-            <View style={styles.metalPill}>
-              <View style={[styles.metalDot, { backgroundColor: SILVER }]} />
-              <Text style={styles.metalText}>Silver</Text>
+              <Text style={styles.sectionMeta}>{openTasks.length} offen</Text>
             </View>
           </View>
 
-          <Pressable onPress={() => setCatEditOpen(true)} style={styles.editBtn}>
-            <Text style={styles.editBtnText}>Bearbeiten</Text>
-          </Pressable>
-        </View>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.categoryRow}
+          >
+            <Pressable
+              onPress={() => setActiveCategoryId(null)}
+              style={[
+                styles.categoryPill,
+                !activeCategoryId && { borderColor: GOLD, borderWidth: 2 },
+              ]}
+            >
+              <Text style={styles.categoryPillText}>Alle</Text>
+            </Pressable>
 
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 14, paddingVertical: 12 }}>
-          {categoriesWithCounts.map((c) => {
-            const active = activeCategoryId === c.id;
-            return (
-              <Pressable
-                key={c.id}
-                onPress={() => setActiveCategoryId(active ? null : c.id)}
-                style={[styles.catCard, active && { borderColor: c.color, borderWidth: 2 }]}
-              >
-                <Text style={styles.catCount}>{c.count} tasks</Text>
-                <Text style={styles.catName}>{c.name}</Text>
-                <View style={[styles.catLine, { backgroundColor: c.color, opacity: active ? 1 : 0.6 }]} />
-              </Pressable>
-            );
-          })}
-        </ScrollView>
+            {categoriesWithCounts.map((category) => {
+              const active = activeCategoryId === category.id;
 
-        {/* Tasks */}
-        <Text style={[styles.section, { marginTop: 14 }]}>TODAY’S TASKS</Text>
-
-        <View style={{ gap: 12, marginTop: 12 }}>
-          {filteredTasks.map((t) => {
-            const cat = state.categories.find((c) => c.id === t.categoryId);
-            const accent = cat?.color ?? accentColor;
-
-            return (
-              <View key={t.id} style={[styles.taskRow, t.done && { opacity: 0.55 }]}>
+              return (
                 <Pressable
-                  onPress={() => toggleTaskDone(t.id)}
-                  style={[styles.check, { borderColor: accent }, t.done && { backgroundColor: accent }]}
-                />
-                <Pressable style={{ flex: 1 }} onPress={() => toggleTaskDone(t.id)}>
-                  <Text style={[styles.taskText, t.done && { textDecorationLine: 'line-through' }]} numberOfLines={1}>
-                    {t.title}
+                  key={category.id}
+                  onPress={() => setActiveCategoryId(active ? null : category.id)}
+                  style={[
+                    styles.categoryPill,
+                    active && {
+                      borderColor: category.color,
+                      borderWidth: 2,
+                    },
+                  ]}
+                >
+                  <View style={[styles.categoryDot, { backgroundColor: category.color }]} />
+                  <Text style={styles.categoryPillText}>
+                    {category.name} · {category.count}
                   </Text>
                 </Pressable>
+              );
+            })}
+          </ScrollView>
+        </View>
 
-                {/* Reminder bell (funktioniert nur wenn master bell enabled) */}
-                <Pressable
-                  onPress={() => {
-                    if (!notificationsEnabled) return;
-                    toggleTaskReminder(t.id);
-                  }}
-                  style={styles.reminderBtn}
-                >
-                  <Ionicons
-                    name={t.reminderEnabled ? 'alarm' : 'alarm-outline'}
-                    size={18}
-                    color={notificationsEnabled ? 'rgba(255,255,255,0.85)' : 'rgba(255,255,255,0.35)'}
-                  />
-                </Pressable>
-              </View>
-            );
-          })}
+        <View style={styles.card}>
+          <View style={styles.rowBetween}>
+            <Text style={styles.sectionTitle}>Aufgaben</Text>
+            <Pressable onPress={() => setShowCompleted((current) => !current)} style={styles.secondaryButton}>
+              <Text style={styles.secondaryButtonText}>
+                {showCompleted
+                  ? 'Erledigte ausblenden'
+                  : `Erledigte anzeigen (${completedTasks.length})`}
+              </Text>
+            </Pressable>
+          </View>
+
+          {visibleTasks.length === 0 ? (
+            <Text style={styles.emptyText}>
+              {showCompleted
+                ? 'Keine Aufgaben in dieser Ansicht.'
+                : 'Keine offenen Aufgaben. Sehr stark.'}
+            </Text>
+          ) : (
+            visibleTasks.map((task) => {
+              const category = state.categories.find((item) => item.id === task.categoryId);
+              const accent = category?.color ?? accentColor;
+
+              return (
+                <View key={task.id} style={[styles.taskCard, task.done && styles.taskCardDone]}>
+                  <Pressable onPress={() => toggleTaskDone(task.id)} style={styles.taskMain}>
+                    <View
+                      style={[
+                        styles.check,
+                        { borderColor: accent },
+                        task.done && { backgroundColor: accent },
+                      ]}
+                    >
+                      {task.done ? <Ionicons name="checkmark" size={15} color="#0B1636" /> : null}
+                    </View>
+
+                    <View style={styles.taskContent}>
+                      <Text style={[styles.taskTitle, task.done && styles.taskTitleDone]}>{task.title}</Text>
+
+                      <View style={styles.metaRow}>
+                        <Text style={[styles.metaText, { color: accent }]}>{category?.name ?? 'Kategorie'}</Text>
+                        {task.subcategory ? <Text style={styles.metaText}>• {task.subcategory}</Text> : null}
+                        <Text style={styles.metaText}>• {priorityLabel(task.priority)}</Text>
+                      </View>
+
+                      {task.note ? <Text style={styles.noteText}>{task.note}</Text> : null}
+                    </View>
+                  </Pressable>
+
+                  <View style={styles.taskActions}>
+                    {!task.done ? (
+                      <Pressable onPress={() => toggleTaskReminder(task.id)} style={styles.iconBtn}>
+                        <Ionicons
+                          name={task.reminderEnabled ? 'notifications' : 'notifications-outline'}
+                          size={18}
+                          color={TEXT}
+                        />
+                      </Pressable>
+                    ) : null}
+
+                    <Pressable
+                      onPress={() => {
+                        Alert.alert(
+                          'Todo löschen',
+                          'Möchtest du dieses Todo wirklich löschen?',
+                          [
+                            { text: 'Abbrechen', style: 'cancel' },
+                            {
+                              text: 'Löschen',
+                              style: 'destructive',
+                              onPress: () => deleteTask(task.id),
+                            },
+                          ],
+                        );
+                      }}
+                      style={styles.iconBtn}
+                    >
+                      <Ionicons name="trash-outline" size={18} color="#ffb4b4" />
+                    </Pressable>
+                  </View>
+                </View>
+              );
+            })
+          )}
+
+          {completedTasks.length > 0 ? (
+            <Pressable
+              onPress={() => {
+                Alert.alert(
+                  'Erledigte löschen',
+                  'Möchtest du alle erledigten Todos endgültig löschen?',
+                  [
+                    { text: 'Abbrechen', style: 'cancel' },
+                    {
+                      text: 'Löschen',
+                      style: 'destructive',
+                      onPress: () => clearCompletedTasks(),
+                    },
+                  ],
+                );
+              }}
+              style={styles.clearButton}
+            >
+              <Text style={styles.clearButtonText}>Alle erledigten löschen</Text>
+            </Pressable>
+          ) : null}
         </View>
       </ScrollView>
 
-      {/* FAB gold + pulsing glow (passt sich an accentColor an) */}
-      <Pressable onPress={() => setAddOpen(true)} style={[styles.fab, { backgroundColor: accentColor }]}>
-        <Animated.View
-          pointerEvents="none"
-          style={[
-            styles.fabGlow,
-            {
-              backgroundColor: accentColor,
-              opacity: glowOpacity,
-              transform: [{ scale: glowScale }],
-            },
-          ]}
-        />
-        <Text style={styles.fabPlus}>+</Text>
+      <Animated.View
+        style={[
+          styles.fabGlow,
+          {
+            opacity: glow,
+            shadowOpacity: glow,
+            borderColor: accentColor,
+          },
+        ]}
+      />
+      <Pressable
+        onPress={() => {
+          setCatId(activeCategoryId ?? state.categories[0]?.id ?? 'business');
+          setAddOpen(true);
+        }}
+        style={[styles.fab, { backgroundColor: '#d8d8d8' }]}
+      >
+        <Ionicons name="add" size={28} color="#0B1636" />
       </Pressable>
 
-      {/* Add Task Modal */}
-      <Modal transparent visible={addOpen} animationType="fade">
-        <Pressable style={styles.overlay} onPress={() => setAddOpen(false)}>
-          <Pressable style={styles.modal} onPress={() => {}}>
-            <Text style={styles.modalTitle}>Add Task</Text>
+      <Modal visible={addOpen} transparent animationType="slide" onRequestClose={() => setAddOpen(false)}>
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>Neues Todo</Text>
 
             <TextInput
               value={title}
               onChangeText={setTitle}
-              placeholder="Task title…"
-              placeholderTextColor="rgba(255,255,255,0.50)"
+              placeholder="Zum Beispiel: Ersten Trainingsplan festlegen"
+              placeholderTextColor="rgba(255,255,255,0.35)"
               style={styles.input}
             />
 
-            <Text style={styles.modalLabel}>Category</Text>
-            <View style={{ flexDirection: 'row', gap: 10, flexWrap: 'wrap' }}>
-              {state.categories.map((c) => (
-                <Pressable
-                  key={c.id}
-                  onPress={() => setCatId(c.id)}
-                  style={[
-                    styles.pill,
-                    { borderColor: c.color },
-                    catId === c.id && { backgroundColor: 'rgba(255,255,255,0.10)' },
-                  ]}
-                >
-                  <View style={[styles.pillDot, { backgroundColor: c.color }]} />
-                  <Text style={styles.pillText}>{c.name}</Text>
-                </Pressable>
-              ))}
+            <TextInput
+              value={subcategory}
+              onChangeText={setSubcategory}
+              placeholder="Unterkategorie, z. B. Start / Fokus / Review"
+              placeholderTextColor="rgba(255,255,255,0.35)"
+              style={styles.input}
+            />
+
+            <TextInput
+              value={note}
+              onChangeText={setNote}
+              placeholder="Kurzer Zusatz oder Beschreibung"
+              placeholderTextColor="rgba(255,255,255,0.35)"
+              style={[styles.input, styles.textarea]}
+              multiline
+            />
+
+            <Text style={styles.modalSectionLabel}>Priorität</Text>
+            <View style={styles.pillRow}>
+              {(['low', 'medium', 'high'] as const).map((item) => {
+                const active = priority === item;
+                return (
+                  <Pressable
+                    key={item}
+                    onPress={() => setPriority(item)}
+                    style={[styles.modalPill, active && styles.modalPillActive]}
+                  >
+                    <Text style={[styles.modalPillText, active && styles.modalPillTextActive]}>
+                      {priorityLabel(item)}
+                    </Text>
+                  </Pressable>
+                );
+              })}
             </View>
 
-            <Pressable onPress={submit} style={[styles.addBtn, { backgroundColor: accentColor }]}>
-              <Text style={styles.addBtnText}>ADD</Text>
-            </Pressable>
+            <Text style={styles.modalSectionLabel}>Kategorie</Text>
+            <View style={styles.pillRow}>
+              {state.categories.map((category) => {
+                const active = catId === category.id;
+                return (
+                  <Pressable
+                    key={category.id}
+                    onPress={() => setCatId(category.id)}
+                    style={[
+                      styles.modalPill,
+                      { borderColor: category.color },
+                      active && { backgroundColor: 'rgba(255,255,255,0.10)' },
+                    ]}
+                  >
+                    <Text style={styles.modalPillText}>{category.name}</Text>
+                  </Pressable>
+                );
+              })}
+            </View>
 
-            <Text style={styles.hint}>
-              Reminder: Tippe rechts beim Task auf das Alarm-Symbol (nur wenn Glocke aktiv ist).
-            </Text>
-          </Pressable>
-        </Pressable>
+            <View style={styles.modalActions}>
+              <Pressable onPress={() => setAddOpen(false)} style={styles.cancelBtn}>
+                <Text style={styles.cancelBtnText}>Abbrechen</Text>
+              </Pressable>
+
+              <Pressable onPress={submit} style={styles.submitBtn}>
+                <Text style={styles.submitBtnText}>Hinzufügen</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
       </Modal>
 
-      {/* Category edit modal */}
-      <CategoryManagerModal
-        visible={catEditOpen}
-        onClose={() => setCatEditOpen(false)}
-        categories={state.categories}
-        onAdd={addCategory}
-        onRename={renameCategory}
-        onRecolor={recolorCategory}
-        onDelete={deleteCategory}
-      />
-    </View>
+      <Modal visible={categoryOpen} transparent animationType="slide" onRequestClose={() => setCategoryOpen(false)}>
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>Neue Kategorie</Text>
+
+            <TextInput
+              value={newCategoryName}
+              onChangeText={setNewCategoryName}
+              placeholder="Name der Kategorie"
+              placeholderTextColor="rgba(255,255,255,0.35)"
+              style={styles.input}
+            />
+
+            <Text style={styles.modalSectionLabel}>Farbe</Text>
+            <View style={styles.pillRow}>
+              {['#D4AF37', '#C0C0C0', '#5BC0BE', '#FF8A80', '#7C5CFF'].map((color) => {
+                const active = newCategoryColor === color;
+                return (
+                  <Pressable
+                    key={color}
+                    onPress={() => setNewCategoryColor(color)}
+                    style={[
+                      styles.colorDot,
+                      { backgroundColor: color },
+                      active && styles.colorDotActive,
+                    ]}
+                  />
+                );
+              })}
+            </View>
+
+            <View style={styles.modalActions}>
+              <Pressable onPress={() => setCategoryOpen(false)} style={styles.cancelBtn}>
+                <Text style={styles.cancelBtnText}>Abbrechen</Text>
+              </Pressable>
+
+              <Pressable onPress={submitCategory} style={styles.submitBtn}>
+                <Text style={styles.submitBtnText}>Anlegen</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  headerTop: {
-    backgroundColor: BG_DARK,
-    paddingTop: 54,
-    paddingHorizontal: 18,
-    paddingBottom: 18,
+  safe: {
+    flex: 1,
+    backgroundColor: BG,
   },
-  headerRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  headerIcon: {
-    width: 42,
-    height: 42,
-    borderRadius: 999,
-    backgroundColor: 'rgba(255,255,255,0.10)',
+  content: {
+    paddingTop: 24,
+    paddingHorizontal: 18,
+    paddingBottom: 110,
+    gap: 16,
+  },
+  header: {
+    backgroundColor: BG_DARK,
+    borderRadius: 24,
+    padding: 18,
     borderWidth: 1,
     borderColor: BORDER,
-    alignItems: 'center',
-    justifyContent: 'center',
   },
-  title: { marginTop: 12, color: TEXT, fontSize: 28, fontWeight: '900' },
-
-  sectionRow: { marginTop: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  section: { color: MUTED, fontWeight: '900', letterSpacing: 1.1 },
-
-  metalPill: {
+  title: {
+    color: TEXT,
+    fontSize: 28,
+    fontWeight: '900',
+  },
+  card: {
+    backgroundColor: CARD,
+    borderRadius: 22,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: BORDER,
+  },
+  rowBetween: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: 12,
+    flexWrap: 'wrap',
+  },
+  headerRightRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    flexWrap: 'wrap',
+  },
+  sectionTitle: {
+    color: TEXT,
+    fontWeight: '900',
+    fontSize: 16,
+  },
+  sectionMeta: {
+    color: GOLD,
+    fontWeight: '900',
+    fontSize: 13,
+  },
+  categoryAddBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderRadius: 12,
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    borderWidth: 1,
+    borderColor: BORDER,
+  },
+  categoryAddBtnText: {
+    color: GOLD,
+    fontWeight: '800',
+    fontSize: 12,
+  },
+  categoryRow: {
+    gap: 10,
+    paddingTop: 12,
+    paddingRight: 6,
+  },
+  categoryPill: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
     borderRadius: 999,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
     backgroundColor: 'rgba(255,255,255,0.08)',
     borderWidth: 1,
     borderColor: BORDER,
   },
-  metalDot: { width: 10, height: 10, borderRadius: 99 },
-  metalText: { color: 'rgba(255,255,255,0.85)', fontWeight: '900', fontSize: 12 },
-
-  editBtn: {
+  categoryPillText: {
+    color: TEXT,
+    fontWeight: '800',
+    fontSize: 13,
+  },
+  categoryDot: {
+    width: 9,
+    height: 9,
+    borderRadius: 99,
+  },
+  secondaryButton: {
     paddingHorizontal: 12,
-    paddingVertical: 8,
+    paddingVertical: 9,
+    borderRadius: 12,
+    backgroundColor: 'rgba(255,255,255,0.08)',
+  },
+  secondaryButtonText: {
+    color: TEXT,
+    fontWeight: '800',
+    fontSize: 12,
+  },
+  emptyText: {
+    color: MUTED,
+    fontWeight: '700',
+    lineHeight: 20,
+    marginTop: 16,
+  },
+  taskCard: {
+    marginTop: 12,
+    borderRadius: 18,
+    padding: 12,
+    backgroundColor: CARD_DARK,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.06)',
+    flexDirection: 'row',
+    gap: 10,
+  },
+  taskCardDone: {
+    opacity: 0.78,
+  },
+  taskMain: {
+    flex: 1,
+    flexDirection: 'row',
+    gap: 12,
+  },
+  check: {
+    width: 24,
+    height: 24,
+    borderRadius: 8,
+    borderWidth: 2,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 2,
+  },
+  taskContent: {
+    flex: 1,
+  },
+  taskTitle: {
+    color: TEXT,
+    fontWeight: '900',
+    fontSize: 15,
+  },
+  taskTitleDone: {
+    textDecorationLine: 'line-through',
+    color: 'rgba(255,255,255,0.72)',
+  },
+  metaRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginTop: 6,
+  },
+  metaText: {
+    color: MUTED,
+    fontWeight: '800',
+    fontSize: 12,
+  },
+  noteText: {
+    color: 'rgba(255,255,255,0.86)',
+    marginTop: 8,
+    lineHeight: 19,
+    fontSize: 13,
+  },
+  taskActions: {
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  iconBtn: {
+    width: 36,
+    height: 36,
     borderRadius: 999,
-    backgroundColor: 'rgba(255,255,255,0.10)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.06)',
     borderWidth: 1,
     borderColor: BORDER,
   },
-  editBtnText: { color: 'rgba(255,255,255,0.92)', fontWeight: '900', fontSize: 12 },
-
-  catCard: {
-    width: 180,
-    backgroundColor: CARD,
-    borderRadius: 20,
-    padding: 14,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
+  clearButton: {
+    marginTop: 14,
+    alignSelf: 'flex-start',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 12,
+    backgroundColor: 'rgba(255,255,255,0.08)',
   },
-  catCount: { color: MUTED, fontWeight: '800' },
-  catName: { marginTop: 8, color: TEXT, fontWeight: '900', fontSize: 16 },
-  catLine: { marginTop: 12, height: 3, width: 64, borderRadius: 99 },
-
-  taskRow: {
-    backgroundColor: CARD_DARK,
-    borderRadius: 18,
-    paddingVertical: 14,
-    paddingHorizontal: 14,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.06)',
+  clearButtonText: {
+    color: '#ffb4b4',
+    fontWeight: '800',
+    fontSize: 12,
   },
-  check: { width: 18, height: 18, borderRadius: 999, borderWidth: 2, backgroundColor: 'transparent' },
-  taskText: { color: TEXT, fontWeight: '800', flex: 1 },
-
-  reminderBtn: {
-    width: 34,
-    height: 34,
+  fabGlow: {
+    position: 'absolute',
+    right: 10,
+    bottom: 10,
+    width: 76,
+    height: 76,
     borderRadius: 999,
-    backgroundColor: 'rgba(255,255,255,0.06)',
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
-    alignItems: 'center',
-    justifyContent: 'center',
+    shadowColor: GOLD,
+    shadowRadius: 18,
+    elevation: 16,
   },
-
   fab: {
     position: 'absolute',
     right: 18,
-    bottom: 18 + 25,
+    bottom: 18,
     width: 60,
     height: 60,
     borderRadius: 999,
     alignItems: 'center',
     justifyContent: 'center',
-    overflow: 'visible',
+    elevation: 8,
   },
-  fabGlow: {
-    position: 'absolute',
-    width: 92,
-    height: 92,
-    borderRadius: 999,
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(6,10,22,0.55)',
+    justifyContent: 'flex-end',
   },
-  fabPlus: { color: '#0B1636', fontSize: 32, fontWeight: '900', marginTop: -2 },
-
-  overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.40)', justifyContent: 'center', padding: 18 },
-  modal: {
-    backgroundColor: '#0F2454',
-    borderRadius: 22,
-    padding: 16,
-    borderWidth: 1,
+  modalCard: {
+    backgroundColor: BG_DARK,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    padding: 18,
+    borderTopWidth: 1,
     borderColor: BORDER,
   },
-  modalTitle: { color: TEXT, fontWeight: '900', fontSize: 16, marginBottom: 12 },
-  modalLabel: { marginTop: 12, color: MUTED, fontWeight: '900' },
+  modalTitle: {
+    color: TEXT,
+    fontSize: 22,
+    fontWeight: '900',
+    marginBottom: 14,
+  },
   input: {
     backgroundColor: 'rgba(255,255,255,0.08)',
     borderRadius: 14,
-    padding: 12,
-    color: TEXT,
-    fontWeight: '800',
     borderWidth: 1,
     borderColor: BORDER,
+    color: TEXT,
+    paddingHorizontal: 14,
+    paddingVertical: 13,
+    fontSize: 15,
+    marginBottom: 12,
   },
-  pill: {
+  textarea: {
+    minHeight: 88,
+    textAlignVertical: 'top',
+  },
+  modalSectionLabel: {
+    color: MUTED,
+    fontWeight: '900',
+    marginBottom: 8,
+    marginTop: 2,
+  },
+  pillRow: {
     flexDirection: 'row',
-    alignItems: 'center',
+    flexWrap: 'wrap',
     gap: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
+    marginBottom: 12,
+  },
+  modalPill: {
     borderRadius: 999,
     borderWidth: 1,
+    borderColor: BORDER,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
     backgroundColor: 'rgba(255,255,255,0.06)',
   },
-  pillDot: { width: 10, height: 10, borderRadius: 99 },
-  pillText: { color: TEXT, fontWeight: '900' },
-
-  addBtn: { marginTop: 16, borderRadius: 14, paddingVertical: 12, alignItems: 'center' },
-  addBtnText: { color: '#0B1636', fontWeight: '900', letterSpacing: 1.2 },
-
-  hint: { marginTop: 10, color: 'rgba(255,255,255,0.55)', fontWeight: '800', fontSize: 12 },
+  modalPillActive: {
+    backgroundColor: 'rgba(212,175,55,0.16)',
+    borderColor: 'rgba(212,175,55,0.28)',
+  },
+  modalPillText: {
+    color: TEXT,
+    fontWeight: '800',
+    fontSize: 13,
+  },
+  modalPillTextActive: {
+    color: GOLD,
+  },
+  colorDot: {
+    width: 30,
+    height: 30,
+    borderRadius: 99,
+  },
+  colorDotActive: {
+    borderWidth: 3,
+    borderColor: '#fff',
+  },
+  modalActions: {
+    flexDirection: 'row',
+    gap: 12,
+    marginTop: 6,
+  },
+  cancelBtn: {
+    flex: 1,
+    borderRadius: 14,
+    paddingVertical: 14,
+    alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.08)',
+  },
+  cancelBtnText: {
+    color: TEXT,
+    fontWeight: '900',
+  },
+  submitBtn: {
+    flex: 1,
+    borderRadius: 14,
+    paddingVertical: 14,
+    alignItems: 'center',
+    backgroundColor: GOLD,
+  },
+  submitBtnText: {
+    color: '#0B1636',
+    fontWeight: '900',
+  },
 });

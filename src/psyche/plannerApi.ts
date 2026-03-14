@@ -9,6 +9,7 @@ import {
 import type { FreeSlot } from './buildFreeSlots';
 
 const API_URL = process.env.EXPO_PUBLIC_PLANNER_API_URL;
+const APP_SECRET = process.env.EXPO_PUBLIC_APP_SHARED_SECRET;
 
 type PlannerApiRequest = {
   goals: PsycheGoal[];
@@ -40,7 +41,7 @@ function isPlannerBundle(value: any): value is PlannerBundle {
 }
 
 export async function fetchPlannerBundle(
-  input: PlannerApiRequest
+  input: PlannerApiRequest,
 ): Promise<PlannerBundle> {
   if (!API_URL) {
     throw new Error('Planner API URL missing');
@@ -50,12 +51,14 @@ export async function fetchPlannerBundle(
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
+      ...(APP_SECRET ? { 'X-App-Secret': APP_SECRET } : {}),
     },
     body: JSON.stringify(input),
   });
 
   if (!res.ok) {
-    throw new Error(`Planner API failed: ${res.status}`);
+    const text = await res.text();
+    throw new Error(`Planner API failed: ${res.status} ${text}`);
   }
 
   const data = await res.json();

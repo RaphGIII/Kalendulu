@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useFocusEffect } from '@react-navigation/native';
 import dayjs from 'dayjs';
-import { Habit, HabitState } from './types';
+
+import type { Habit, HabitCadence, HabitState } from './types';
 import { loadHabitsState, saveHabitsState } from './storage';
 
 function uid() {
@@ -9,9 +10,36 @@ function uid() {
 }
 
 const DEFAULTS: Habit[] = [
-  { id: uid(), title: 'Meditation', color: '#D4AF37', targetPerDay: 1, checkins: {} },
-  { id: uid(), title: 'Workout', color: '#7C5CFF', targetPerDay: 1, checkins: {} },
-  { id: uid(), title: 'Lesen', color: '#00C2C7', targetPerDay: 1, checkins: {} },
+  {
+    id: uid(),
+    title: 'Kurz bewegen',
+    color: '#D4AF37',
+    targetPerDay: 1,
+    checkins: {},
+    description: 'Kleine Bewegungseinheit, damit der Einstieg leicht bleibt.',
+    subcategory: 'Start',
+    linkedGoalId: null,
+    cadence: 'daily',
+    targetCount: 1,
+    weekdays: [1, 2, 3, 4, 5, 6, 0],
+    dayOfMonth: null,
+    durationMinutes: 10,
+  },
+  {
+    id: uid(),
+    title: 'Fokusblock',
+    color: '#7C5CFF',
+    targetPerDay: 1,
+    checkins: {},
+    description: 'Ein klarer Arbeitsblock für echten Fortschritt.',
+    subcategory: 'Kernroutine',
+    linkedGoalId: null,
+    cadence: 'selected_days',
+    targetCount: 3,
+    weekdays: [1, 3, 5],
+    dayOfMonth: null,
+    durationMinutes: 30,
+  },
 ];
 
 const DEFAULT_STATE: HabitState = {
@@ -19,50 +47,162 @@ const DEFAULT_STATE: HabitState = {
   habits: DEFAULTS,
 };
 
-function isComplete(h: Habit, dateKey: string) {
-  return (h.checkins[dateKey] ?? 0) >= h.targetPerDay;
+function normalizeHabit(habit: Habit): Habit {
+  return {
+    ...habit,
+    description: habit.description ?? '',
+    subcategory: habit.subcategory ?? null,
+    linkedGoalId: habit.linkedGoalId ?? null,
+    cadence: habit.cadence ?? 'daily',
+    targetCount:
+      habit.targetCount ??
+      (habit.cadence === 'weekly' || habit.cadence === 'monthly'
+        ? 1
+        : habit.targetPerDay ?? 1),
+    weekdays: habit.weekdays ?? [1, 2, 3, 4, 5, 6, 0],
+    dayOfMonth: habit.dayOfMonth ?? null,
+    durationMinutes: habit.durationMinutes ?? null,
+    targetPerDay: habit.targetPerDay ?? 1,
+    checkins: habit.checkins ?? {},
+  };
 }
 
-function calcStreaks(h: Habit) {
-  let cur = 0;
-  let d = dayjs();
+function normalizeState(saved: HabitState | null): HabitState {
+  if (!saved?.habits) return DEFAULT_STATE;
 
-  while (isComplete(h, d.format('YYYY-MM-DD'))) {
-    cur += 1;
-    d = d.subtract(1, 'day');
+  return {
+    name: saved.name ?? DEFAULT_STATE.name,
+    habits: saved.habits.map(normalizeHabit),
+  };
+}
+
+function isDayPlanned(habit: Habit, dateKey: string) {
+  const date = dayjs(dateKey);
+  const weekday = date.day();
+
+  switch (habit.cadence) {
+    case 'daily':
+      return true;
+    case 'selected_days':
+      return (habit.weekdays ?? []).includes(weekday);
+    case 'weekly':
+      return true;
+    case 'monthly':
+      return habit.dayOfMonth ? date.date() === habit.dayOfMonth : true;
+    default:
+      return true;
+  }
+}
+
+function getWeekRange(dateKey: string) {
+  const base = dayjs(dateKey);
+  const start = base.startOf('week');
+  const end = base.endOf('week');
+  return { start, end };
+}
+
+function getMonthRange(dateKey: string) {
+  const base = dayjs(dateKey);
+  const start = base.startOf('month');
+  const end = base.endOf('month');
+  return { start, end };
+}
+
+function getProgressForPeriod(habit: Habit, dateKey: string) {
+  if (habit.cadence === 'daily' || habit.cadence === 'selected_days') {
+    return habit.checkins[dateKey] ?? 0;
   }
 
-  const keys = Object.keys(h.checkins).sort();
-  if (keys.length === 0) return { current: cur, best: cur };
+  if (habit.cadence === 'weekly') {
+    const { start, end } = getWeekRange(dateKey);
+    let total = 0;
 
-  let best = 0;
-  let run = 0;
-  let prev: dayjs.Dayjs | null = null;
+    for (let current = start; current.isBefore(end.add(1, 'day')); current = current.add(1, 'day')) {
+      const key = current.format('YYYY-MM-DD');
+      total += habit.checkins[key] ?? 0;
+    }
 
-  for (const k of keys) {
-    const day = dayjs(k);
-    const complete = isComplete(h, k);
+    return total;
+  }
 
-    if (!complete) {
-      run = 0;
-      prev = day;
+  const { start, end } = getMonthRange(dateKey);
+  let total = 0;
+
+  for (let current = start; current.isBefore(end.add(1, 'day')); current = current.add(1, 'day')) {
+    const key = current.format('YYYY-MM-DD');
+    total += habit.checkins[key] ?? 0;
+  }
+
+  return total;
+}
+
+function getTargetForPeriod(habit: Habit) {
+  if (habit.cadence === 'daily' || habit.cadence === 'selected_days') {
+    return habit.targetPerDay || 1;
+  }
+  return habit.targetCount || 1;
+}
+
+function isComplete(habit: Habit, dateKey: string) {
+  return getProgressForPeriod(habit, dateKey) >= getTargetForPeriod(habit);
+}
+
+function calcStreaks(habit: Habit) {
+  let current = 0;
+  let day = dayjs();
+
+  while (true) {
+    const key = day.format('YYYY-MM-DD');
+
+    if (!isDayPlanned(habit, key)) {
+      day = day.subtract(1, 'day');
       continue;
     }
 
-    if (!prev) {
-      run = 1;
-    } else {
-      const diff = day.diff(prev, 'day');
-      run = diff === 1 ? run + 1 : 1;
-    }
+    if (!isComplete(habit, key)) break;
 
-    best = Math.max(best, run);
-    prev = day;
+    current += 1;
+    day = day.subtract(1, 'day');
   }
 
-  best = Math.max(best, cur);
-  return { current: cur, best };
+  let best = 0;
+  let run = 0;
+  const days = Array.from({ length: 120 }, (_, index) =>
+    dayjs().subtract(119 - index, 'day'),
+  );
+
+  for (const dayItem of days) {
+    const key = dayItem.format('YYYY-MM-DD');
+
+    if (!isDayPlanned(habit, key)) continue;
+
+    if (isComplete(habit, key)) {
+      run += 1;
+      best = Math.max(best, run);
+    } else {
+      run = 0;
+    }
+  }
+
+  return {
+    current,
+    best: Math.max(best, current),
+  };
 }
+
+type AddHabitInput = {
+  title: string;
+  color: string;
+  targetPerDay?: number;
+  description?: string;
+  subcategory?: string | null;
+  linkedGoalId?: string | null;
+  cadence?: HabitCadence;
+  targetCount?: number;
+  weekdays?: number[];
+  dayOfMonth?: number | null;
+  durationMinutes?: number | null;
+};
 
 export function useHabits() {
   const [state, setState] = useState<HabitState>(DEFAULT_STATE);
@@ -71,13 +211,10 @@ export function useHabits() {
   const loadState = useCallback(async () => {
     try {
       const saved = await loadHabitsState();
-      if (saved?.habits) {
-        setState(saved);
-      } else {
-        setState(DEFAULT_STATE);
-      }
+      setState(normalizeState(saved));
     } catch (e) {
       console.log('Failed to load habits state', e);
+      setState(DEFAULT_STATE);
     } finally {
       setHydrated(true);
     }
@@ -90,7 +227,7 @@ export function useHabits() {
   useFocusEffect(
     useCallback(() => {
       loadState();
-    }, [loadState])
+    }, [loadState]),
   );
 
   useEffect(() => {
@@ -101,92 +238,166 @@ export function useHabits() {
   const todayKey = dayjs().format('YYYY-MM-DD');
 
   const toggleCheckin = (habitId: string, dateKey = todayKey) => {
-    setState((s) => ({
-      ...s,
-      habits: s.habits.map((h) => {
-        if (h.id !== habitId) return h;
+    setState((current) => ({
+      ...current,
+      habits: current.habits.map((habit) => {
+        if (habit.id !== habitId) return habit;
 
-        const current = h.checkins[dateKey] ?? 0;
-        const next = current >= h.targetPerDay ? 0 : current + 1;
+        const currentValue = habit.checkins[dateKey] ?? 0;
+        const target = getTargetForPeriod(habit);
+        const nextValue = currentValue >= target ? 0 : currentValue + 1;
 
         return {
-          ...h,
+          ...habit,
           checkins: {
-            ...h.checkins,
-            [dateKey]: next,
+            ...habit.checkins,
+            [dateKey]: nextValue,
           },
         };
       }),
     }));
   };
 
-  const addHabit = (title: string, color: string, targetPerDay: number) => {
-    const h: Habit = {
+  const addHabit = ({
+    title,
+    color,
+    targetPerDay = 1,
+    description = '',
+    subcategory = null,
+    linkedGoalId = null,
+    cadence = 'daily',
+    targetCount = 1,
+    weekdays = [1, 2, 3, 4, 5, 6, 0],
+    dayOfMonth = null,
+    durationMinutes = null,
+  }: AddHabitInput) => {
+    const nextTitle = title.trim();
+    if (!nextTitle) return;
+
+    const habit: Habit = {
       id: uid(),
-      title,
+      title: nextTitle,
       color,
       targetPerDay,
       checkins: {},
+      description: description.trim(),
+      subcategory,
+      linkedGoalId,
+      cadence,
+      targetCount,
+      weekdays,
+      dayOfMonth,
+      durationMinutes,
     };
 
-    setState((s) => ({
-      ...s,
-      habits: [h, ...s.habits],
+    setState((current) => ({
+      ...current,
+      habits: [normalizeHabit(habit), ...current.habits],
     }));
   };
 
   const removeHabit = (habitId: string) => {
-    setState((s) => ({
-      ...s,
-      habits: s.habits.filter((h) => h.id !== habitId),
+    setState((current) => ({
+      ...current,
+      habits: current.habits.filter((habit) => habit.id !== habitId),
     }));
   };
 
   const renameHabit = (habitId: string, title: string) => {
-    setState((s) => ({
-      ...s,
-      habits: s.habits.map((h) => (h.id === habitId ? { ...h, title } : h)),
+    const nextTitle = title.trim();
+    if (!nextTitle) return;
+
+    setState((current) => ({
+      ...current,
+      habits: current.habits.map((habit) =>
+        habit.id === habitId ? { ...habit, title: nextTitle } : habit,
+      ),
     }));
   };
 
   const recolorHabit = (habitId: string, color: string) => {
-    setState((s) => ({
-      ...s,
-      habits: s.habits.map((h) => (h.id === habitId ? { ...h, color } : h)),
+    setState((current) => ({
+      ...current,
+      habits: current.habits.map((habit) =>
+        habit.id === habitId ? { ...habit, color } : habit,
+      ),
+    }));
+  };
+
+  const updateHabit = (
+    habitId: string,
+    updates: Partial<
+      Pick<
+        Habit,
+        | 'title'
+        | 'description'
+        | 'subcategory'
+        | 'targetPerDay'
+        | 'cadence'
+        | 'targetCount'
+        | 'weekdays'
+        | 'dayOfMonth'
+        | 'durationMinutes'
+      >
+    >,
+  ) => {
+    setState((current) => ({
+      ...current,
+      habits: current.habits.map((habit) => {
+        if (habit.id !== habitId) return habit;
+
+        return normalizeHabit({
+          ...habit,
+          ...updates,
+          title: updates.title !== undefined ? updates.title.trim() : habit.title,
+          description:
+            updates.description !== undefined
+              ? updates.description.trim()
+              : habit.description,
+          subcategory:
+            updates.subcategory !== undefined
+              ? updates.subcategory?.trim() || null
+              : habit.subcategory,
+        });
+      }),
     }));
   };
 
   const setTarget = (habitId: string, targetPerDay: number) => {
-    setState((s) => ({
-      ...s,
-      habits: s.habits.map((h) => (h.id === habitId ? { ...h, targetPerDay } : h)),
+    setState((current) => ({
+      ...current,
+      habits: current.habits.map((habit) =>
+        habit.id === habitId ? { ...habit, targetPerDay } : habit,
+      ),
     }));
   };
 
   const last7 = useMemo(() => {
-    const days = Array.from({ length: 7 }, (_, i) => dayjs().subtract(6 - i, 'day'));
+    const days = Array.from({ length: 7 }, (_, index) =>
+      dayjs().subtract(6 - index, 'day'),
+    );
 
-    return days.map((d) => {
-      const key = d.format('YYYY-MM-DD');
-      const sum = state.habits.reduce((acc, h) => acc + (h.checkins[key] ?? 0), 0);
+    return days.map((day) => {
+      const key = day.format('YYYY-MM-DD');
+      const sum = state.habits.reduce((acc, habit) => acc + (habit.checkins[key] ?? 0), 0);
 
       return {
         key,
-        label: d.format('dd'),
+        label: day.format('dd'),
         value: sum,
       };
     });
   }, [state.habits]);
 
   const monthHeatmap = useMemo(() => {
-    const m = dayjs();
-    const start = m.startOf('month');
-    const end = m.endOf('month');
+    const month = dayjs();
+    const start = month.startOf('month');
+    const end = month.endOf('month');
     const out: Record<string, number> = {};
 
-    for (let d = start; d.isBefore(end.add(1, 'day')); d = d.add(1, 'day')) {
-      const key = d.format('YYYY-MM-DD');
-      out[key] = state.habits.reduce((acc, h) => acc + (h.checkins[key] ?? 0), 0);
+    for (let day = start; day.isBefore(end.add(1, 'day')); day = day.add(1, 'day')) {
+      const key = day.format('YYYY-MM-DD');
+      out[key] = state.habits.reduce((acc, habit) => acc + (habit.checkins[key] ?? 0), 0);
     }
 
     return out;
@@ -194,9 +405,11 @@ export function useHabits() {
 
   const streaksByHabitId = useMemo(() => {
     const map: Record<string, { current: number; best: number }> = {};
-    for (const h of state.habits) {
-      map[h.id] = calcStreaks(h);
+
+    for (const habit of state.habits) {
+      map[habit.id] = calcStreaks(habit);
     }
+
     return map;
   }, [state.habits]);
 
@@ -207,12 +420,15 @@ export function useHabits() {
     last7,
     monthHeatmap,
     streaksByHabitId,
+
     toggleCheckin,
     addHabit,
     removeHabit,
     renameHabit,
     recolorHabit,
+    updateHabit,
     setTarget,
+
     reload: loadState,
   };
 }
