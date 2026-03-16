@@ -19,6 +19,32 @@ const TODO_KEY = STORAGE_KEYS.TODO;
 const HABITS_KEY = STORAGE_KEYS.HABITS;
 const CALENDAR_KEY = STORAGE_KEYS.CALENDAR_EVENTS;
 
+function toIsoFromBlock(item: PsycheSuggestedCalendarBlock) {
+  if (item.start && item.end) {
+    return {
+      start: item.start,
+      end: item.end,
+    };
+  }
+
+  const base = new Date();
+  const safeStart = item.startTime ?? '18:00';
+  const [hoursRaw, minutesRaw] = safeStart.split(':');
+  const hours = Number(hoursRaw);
+  const minutes = Number(minutesRaw);
+
+  if (Number.isFinite(hours)) base.setHours(hours, Number.isFinite(minutes) ? minutes : 0, 0, 0);
+  else base.setHours(18, 0, 0, 0);
+
+  const duration = Math.max(5, item.durationMinutes ?? 30);
+  const end = new Date(base.getTime() + duration * 60 * 1000);
+
+  return {
+    start: base.toISOString(),
+    end: end.toISOString(),
+  };
+}
+
 export async function loadTodoStateBestEffort(): Promise<TodoStateLike> {
   try {
     const raw = await AsyncStorage.getItem(TODO_KEY);
@@ -74,7 +100,7 @@ function createTodoTaskFromSuggestion(item: PsycheSuggestedTodo): TodoLikeTask {
     createdAt: Date.now(),
     reminderEnabled: false,
     reminderId: null,
-    note: item.note ?? item.reason,
+    note: item.note ?? item.details ?? item.reason,
     subcategory: item.subcategory,
     priority: item.priority ?? 'medium',
   };
@@ -107,12 +133,16 @@ export async function applyHabitSuggestions(items: PsycheSuggestedHabit[]) {
     color: item.color ?? '#D4AF37',
     targetPerDay: item.targetPerDay ?? item.frequencyPerDay ?? 1,
     checkins: {},
-    description: item.description,
-    subcategory: item.subcategory,
+    description: item.description ?? item.details,
+    subcategory: item.subcategory ?? item.categoryLabel,
     cadence: item.cadence ?? 'daily',
     weekdays: item.weekdays ?? [],
     dayOfMonth: item.dayOfMonth ?? null,
     durationMinutes: item.durationMinutes ?? 10,
+    frequencyPerWeek: item.frequencyPerWeek ?? 7,
+    shortTitle: item.shortTitle,
+    details: item.details,
+    difficulty: item.difficulty,
   }));
 
   const next: HabitsStateLike = {
@@ -129,15 +159,19 @@ export async function applyCalendarSuggestions(items: PsycheSuggestedCalendarBlo
 
   const current = await loadCalendarEventsBestEffort();
 
-  const mapped = items.map((item) => ({
-    id: item.id ?? uid('cal'),
-    title: item.title,
-    start: item.start,
-    end: item.end,
-    color: item.color ?? '#D4AF37',
-    location: item.location,
-    description: item.description ?? item.reason,
-  }));
+  const mapped = items.map((item) => {
+    const { start, end } = toIsoFromBlock(item);
+
+    return {
+      id: item.id ?? uid('cal'),
+      title: item.title,
+      start,
+      end,
+      color: item.color ?? '#D4AF37',
+      location: item.location,
+      description: item.description ?? item.details ?? item.reason,
+    };
+  });
 
   const next = [...current, ...mapped];
   await AsyncStorage.setItem(CALENDAR_KEY, JSON.stringify(next));
@@ -168,5 +202,9 @@ export async function applyFullGoalPlan(bundle: {
   habits: PsycheSuggestedHabit[];
   calendarBlocks: PsycheSuggestedCalendarBlock[];
 }) {
-  return applyPsycheSuggestions(bundle);
+  return applyPsycheSuggestions({
+    todos: bundle.todos ?? [],
+    habits: bundle.habits ?? [],
+    calendarBlocks: bundle.calendarBlocks ?? [],
+  });
 }

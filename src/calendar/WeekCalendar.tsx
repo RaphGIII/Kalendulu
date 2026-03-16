@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Pressable,
   SafeAreaView,
@@ -11,7 +11,7 @@ import dayjs from 'dayjs';
 import 'dayjs/locale/de';
 
 import { HOURS_START, HOURS_END, HOUR_HEIGHT, clamp } from './constants';
-import { formatHeaderLabel, getShownDays } from './date';
+import { getShownDays } from './date';
 import { useNow } from './useNow';
 import { useEvents } from './useEvents';
 import EventModal from './EventModal';
@@ -21,7 +21,7 @@ import type { CalEvent } from './types';
 
 dayjs.locale('de');
 
-type CalendarMode = 'month' | 'three' | 'day';
+type CalendarMode = 'month' | 'day' | 'three' | 'five' | 'seven';
 
 type LayoutEvent = {
   event: CalEvent;
@@ -34,13 +34,29 @@ type LayoutEvent = {
 const HOUR_COUNT = HOURS_END - HOURS_START;
 const BODY_HEIGHT = HOUR_COUNT * HOUR_HEIGHT;
 const MIN_EVENT_HEIGHT = 18;
-const LEFT_GUTTER_COMPACT = 48;
+const LEFT_GUTTER_COMPACT = 54;
+const DEFAULT_OPEN_HOUR = 6;
+
+function getModeDayCount(mode: CalendarMode) {
+  switch (mode) {
+    case 'day':
+      return 1;
+    case 'three':
+      return 3;
+    case 'five':
+      return 5;
+    case 'seven':
+      return 7;
+    default:
+      return 3;
+  }
+}
 
 function getEventTop(event: CalEvent) {
   const start = dayjs(event.start);
   const hourFloat = start.hour() + start.minute() / 60;
-  const clamped = clamp(hourFloat, HOURS_START, HOURS_END);
-  return (clamped - HOURS_START) * HOUR_HEIGHT;
+  const clampedHour = clamp(hourFloat, HOURS_START, HOURS_END);
+  return (clampedHour - HOURS_START) * HOUR_HEIGHT;
 }
 
 function getEventHeight(event: CalEvent) {
@@ -142,7 +158,7 @@ function buildDefaultDateFromSlot(day: dayjs.Dayjs, hour: number) {
   return day.hour(hour).minute(0).second(0).millisecond(0).toDate();
 }
 
-function HeaderButton({
+function ModeButton({
   label,
   active,
   onPress,
@@ -152,10 +168,33 @@ function HeaderButton({
   onPress: () => void;
 }) {
   return (
-    <Pressable onPress={onPress} style={[styles.headerBtn, active && styles.headerBtnActive]}>
-      <Text style={[styles.headerBtnText, active && styles.headerBtnTextActive]}>{label}</Text>
+    <Pressable onPress={onPress} style={[styles.modeBtn, active && styles.modeBtnActive]}>
+      <Text numberOfLines={1} style={[styles.modeBtnText, active && styles.modeBtnTextActive]}>
+        {label}
+      </Text>
     </Pressable>
   );
+}
+
+function formatRangeSingleLine(mode: CalendarMode, anchorDate: Date, shownDays: dayjs.Dayjs[]) {
+  if (mode === 'month') {
+    return dayjs(anchorDate).format('MMMM YYYY');
+  }
+
+  if (!shownDays.length) return '';
+
+  const first = shownDays[0];
+  const last = shownDays[shownDays.length - 1];
+
+  if (shownDays.length === 1) {
+    return first.format('D. MMMM');
+  }
+
+  if (first.month() === last.month()) {
+    return `${first.format('D. MMM')} - ${last.format('D. MMM')}`;
+  }
+
+  return `${first.format('D. MMM')} - ${last.format('D. MMM')}`;
 }
 
 export default function WeekCalendar() {
@@ -169,18 +208,35 @@ export default function WeekCalendar() {
   const [modalDefaultDate, setModalDefaultDate] = useState<Date>(new Date());
   const [editingEvent, setEditingEvent] = useState<CalEvent | null>(null);
 
-  const dayCount = mode === 'day' ? 1 : 3;
-  const shownDays = useMemo(() => getShownDays(anchorDate, dayCount), [anchorDate, dayCount]);
+  const verticalScrollRef = useRef<ScrollView | null>(null);
 
-  const headerLabel = useMemo(() => {
-    if (mode === 'month') return dayjs(anchorDate).format('MMMM YYYY');
-    return formatHeaderLabel(shownDays);
-  }, [anchorDate, mode, shownDays]);
+  const dayCount = mode === 'month' ? 0 : getModeDayCount(mode);
+  const shownDays = useMemo(
+    () => (mode === 'month' ? [] : getShownDays(anchorDate, dayCount)),
+    [anchorDate, dayCount, mode],
+  );
+
+  const headerLabel = useMemo(
+    () => formatRangeSingleLine(mode, anchorDate, shownDays),
+    [anchorDate, mode, shownDays],
+  );
 
   const hourLabels = useMemo(
     () => Array.from({ length: HOUR_COUNT + 1 }, (_, index) => HOURS_START + index),
     [],
   );
+
+  useEffect(() => {
+    if (mode === 'month') return;
+
+    const scrollY = Math.max(0, (DEFAULT_OPEN_HOUR - HOURS_START) * HOUR_HEIGHT - 20);
+
+    const id = setTimeout(() => {
+      verticalScrollRef.current?.scrollTo({ y: scrollY, animated: false });
+    }, 60);
+
+    return () => clearTimeout(id);
+  }, [mode, anchorDate]);
 
   const createFromSlot = (day: dayjs.Dayjs, hour: number) => {
     setEditingEvent(null);
@@ -195,9 +251,13 @@ export default function WeekCalendar() {
   };
 
   const moveRange = (direction: -1 | 1) => {
-    const amount = mode === 'month' ? 1 : mode === 'day' ? 1 : 3;
-    const unit = mode === 'month' ? 'month' : 'day';
-    setAnchorDate(dayjs(anchorDate).add(direction * amount, unit).toDate());
+    if (mode === 'month') {
+      setAnchorDate(dayjs(anchorDate).add(direction, 'month').toDate());
+      return;
+    }
+
+    const amount = getModeDayCount(mode);
+    setAnchorDate(dayjs(anchorDate).add(direction * amount, 'day').toDate());
   };
 
   const todayLine = useMemo(() => {
@@ -211,8 +271,34 @@ export default function WeekCalendar() {
     <SafeAreaView style={styles.safe}>
       <View style={styles.container}>
         <View style={styles.topCard}>
-          <View style={styles.topRow}>
-            <Text style={styles.screenTitle}>Kalender</Text>
+          <View style={styles.topNavRow}>
+            <Pressable onPress={() => moveRange(-1)} style={styles.arrowBtn}>
+              <Text style={styles.arrowText}>‹</Text>
+            </Pressable>
+
+            <View style={styles.bigDateWrap}>
+              <Text numberOfLines={1} adjustsFontSizeToFit style={styles.bigDateText}>
+                {headerLabel}
+              </Text>
+            </View>
+
+            <Pressable onPress={() => moveRange(1)} style={styles.arrowBtn}>
+              <Text style={styles.arrowText}>›</Text>
+            </Pressable>
+          </View>
+
+          <View style={styles.bottomControlRow}>
+            <Pressable onPress={() => setAnchorDate(new Date())} style={styles.todayBtn}>
+              <Text style={styles.todayBtnText}>Heute</Text>
+            </Pressable>
+
+            <View style={styles.modeRow}>
+              <ModeButton label="M" active={mode === 'month'} onPress={() => setMode('month')} />
+              <ModeButton label="3" active={mode === 'three'} onPress={() => setMode('three')} />
+              <ModeButton label="5" active={mode === 'five'} onPress={() => setMode('five')} />
+              <ModeButton label="7" active={mode === 'seven'} onPress={() => setMode('seven')} />
+              <ModeButton label="Tag" active={mode === 'day'} onPress={() => setMode('day')} />
+            </View>
 
             <Pressable
               onPress={() => {
@@ -222,35 +308,8 @@ export default function WeekCalendar() {
               }}
               style={styles.addBtn}
             >
-              <Text style={styles.addBtnText}>Neu</Text>
+              <Text style={styles.addBtnText}>+</Text>
             </Pressable>
-          </View>
-
-          <View style={styles.navRow}>
-            <Pressable onPress={() => moveRange(-1)} style={styles.arrowBtn}>
-              <Text style={styles.arrowText}>‹</Text>
-            </Pressable>
-
-            <View style={styles.titleWrap}>
-              <Text style={styles.rangeTitle}>{headerLabel}</Text>
-            </View>
-
-            <Pressable onPress={() => moveRange(1)} style={styles.arrowBtn}>
-              <Text style={styles.arrowText}>›</Text>
-            </Pressable>
-          </View>
-
-          <View style={styles.modeRow}>
-            <HeaderButton label="Monat" active={mode === 'month'} onPress={() => setMode('month')} />
-            <HeaderButton label="3 Tage" active={mode === 'three'} onPress={() => setMode('three')} />
-            <HeaderButton label="Tag" active={mode === 'day'} onPress={() => setMode('day')} />
-            <HeaderButton
-              label="Heute"
-              onPress={() => {
-                setAnchorDate(new Date());
-                if (mode === 'month') setMode('three');
-              }}
-            />
           </View>
         </View>
 
@@ -266,6 +325,7 @@ export default function WeekCalendar() {
           </View>
         ) : (
           <ScrollView
+            ref={verticalScrollRef}
             style={styles.calendarScroll}
             contentContainerStyle={styles.calendarContent}
             showsVerticalScrollIndicator={false}
@@ -278,7 +338,7 @@ export default function WeekCalendar() {
                 return (
                   <View key={day.format('YYYY-MM-DD')} style={styles.dayHeaderCell}>
                     <Text style={[styles.dayHeaderTop, isToday && styles.dayHeaderTopToday]}>
-                      {day.format('dd').toUpperCase()}.
+                      {day.format('dd').toUpperCase()}
                     </Text>
                     <Text style={[styles.dayHeaderBottom, isToday && styles.dayHeaderBottomToday]}>
                       {day.format('D')}
@@ -422,88 +482,107 @@ const styles = StyleSheet.create({
     marginBottom: 6,
     borderRadius: 22,
     paddingHorizontal: 12,
-    paddingVertical: 10,
+    paddingTop: 12,
+    paddingBottom: 12,
     borderWidth: 1,
     borderColor: THEME.border,
   },
-  topRow: {
+  topNavRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
     gap: 10,
   },
-  screenTitle: {
-    color: THEME.text,
-    fontSize: 26,
-    fontWeight: '900',
-  },
-  addBtn: {
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    borderRadius: 16,
-    backgroundColor: ACCENT_GOLD,
-  },
-  addBtnText: {
-    color: '#0B1636',
-    fontWeight: '900',
-    fontSize: 15,
-  },
-  navRow: {
-    marginTop: 10,
-    flexDirection: 'row',
+  bigDateWrap: {
+    flex: 1,
     alignItems: 'center',
-    gap: 8,
+    justifyContent: 'center',
+    paddingHorizontal: 6,
+  },
+  bigDateText: {
+    color: THEME.text,
+    fontSize: 30,
+    fontWeight: '900',
+    textAlign: 'center',
   },
   arrowBtn: {
-    width: 40,
-    height: 40,
-    borderRadius: 14,
+    width: 48,
+    height: 48,
+    borderRadius: 16,
     backgroundColor: 'rgba(255,255,255,0.08)',
     alignItems: 'center',
     justifyContent: 'center',
   },
   arrowText: {
     color: THEME.text,
-    fontSize: 24,
+    fontSize: 28,
     fontWeight: '900',
-    lineHeight: 24,
+    lineHeight: 28,
   },
-  titleWrap: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  rangeTitle: {
-    color: THEME.text,
-    fontSize: 16,
-    fontWeight: '900',
-    textAlign: 'center',
-  },
-  modeRow: {
-    marginTop: 10,
+  bottomControlRow: {
+    marginTop: 14,
     flexDirection: 'row',
-    flexWrap: 'wrap',
+    alignItems: 'center',
     gap: 8,
   },
-  headerBtn: {
-    paddingHorizontal: 12,
-    paddingVertical: 9,
+  todayBtn: {
+    width: 76,
+    height: 40,
     borderRadius: 999,
     backgroundColor: 'rgba(255,255,255,0.08)',
     borderWidth: 1,
     borderColor: THEME.border,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  headerBtnActive: {
-    backgroundColor: 'rgba(212,175,55,0.16)',
-    borderColor: 'rgba(212,175,55,0.24)',
-  },
-  headerBtnText: {
+  todayBtnText: {
     color: THEME.text,
     fontWeight: '800',
     fontSize: 12,
   },
-  headerBtnTextActive: {
+  modeRow: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  modeBtn: {
+    flex: 1,
+    minWidth: 0,
+    height: 40,
+    borderRadius: 999,
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    borderWidth: 1,
+    borderColor: THEME.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 4,
+  },
+  modeBtnActive: {
+    backgroundColor: 'rgba(212,175,55,0.16)',
+    borderColor: 'rgba(212,175,55,0.24)',
+  },
+  modeBtnText: {
+    color: THEME.text,
+    fontWeight: '800',
+    fontSize: 11,
+  },
+  modeBtnTextActive: {
     color: ACCENT_GOLD,
+  },
+  addBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 14,
+    backgroundColor: ACCENT_GOLD,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  addBtnText: {
+    color: '#0B1636',
+    fontWeight: '900',
+    fontSize: 24,
+    lineHeight: 24,
+    marginTop: -1,
   },
   monthWrap: {
     flex: 1,
@@ -554,7 +633,7 @@ const styles = StyleSheet.create({
   timeColumn: {
     width: LEFT_GUTTER_COMPACT,
     height: BODY_HEIGHT,
-    paddingRight: 2,
+    paddingRight: 4,
   },
   timeSlot: {
     height: HOUR_HEIGHT,
@@ -563,7 +642,7 @@ const styles = StyleSheet.create({
   },
   timeLabel: {
     color: THEME.muted,
-    fontSize: 10,
+    fontSize: 12,
     fontWeight: '800',
     transform: [{ translateY: -7 }],
   },

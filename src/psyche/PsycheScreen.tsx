@@ -1,6 +1,5 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
-  ActivityIndicator,
   Alert,
   Pressable,
   SafeAreaView,
@@ -10,525 +9,1686 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import dayjs from 'dayjs';
 import 'dayjs/locale/de';
 
-import { fetchGoalRefinement } from './refinementApi';
-import { fetchPlannerBundle } from './plannerApi';
-import { applyFullGoalPlan } from './adapters';
-import type {
+import { GOLD, PSYCHE_THEME } from './styles';
+import {
+  CalendarEventLike,
   GoalAnswerMap,
+  GoalCalendarBlockPlan,
+  GoalCategory,
+  GoalExecutionPlan,
+  GoalMiniStepStatus,
   GoalQuestion,
-  GoalRefinementResponse,
+  GoalQuestionOption,
+  MindsetProfile,
   PlannerBundle,
   PlannerExecutionStep,
+  PsycheGoal,
+  PsycheSettings,
+  PsycheSignals,
+  UserPlanningProfile,
 } from './types';
+import {
+  loadPsycheGoals,
+  loadPsycheSettings,
+  savePsycheGoals,
+  savePsycheSettings,
+} from './storage';
+import {
+  loadCalendarEventsBestEffort,
+  loadHabitsState,
+  loadTodoStateBestEffort,
+  applyFullGoalPlan,
+} from './adapters';
+import { buildFreeSlots } from './buildFreeSlots';
+import { buildUserPlanningProfile } from './buildUserPlanningProfile';
+import { fetchGoalRefinement } from './refinementApi';
+import { fetchPlannerBundle } from './plannerApi';
 
 dayjs.locale('de');
 
-const BG = '#2E437A';
-const BG_DARK = '#233A73';
-const CARD = '#314A86';
-const CARD_DARK = '#243D77';
-const TEXT = '#FFFFFF';
-const MUTED = 'rgba(255,255,255,0.72)';
-const BORDER = 'rgba(255,255,255,0.10)';
-const GOLD = '#D4AF37';
-
-const PLAN_STORAGE_KEY = 'kalendulu_ai_goal_plans_v2';
-
-type Mode = 'start' | 'questions' | 'plan';
-type Phase = 'idle' | 'refine' | 'plan' | 'apply';
-
-type StoredGoalPlan = {
-  id: string;
-  title: string;
-  createdAt: string;
-  refinement: GoalRefinementResponse | null;
-  planner: PlannerBundle;
+const DEFAULT_SETTINGS: PsycheSettings = {
+  style: 'winner',
+  intensity: 2,
 };
 
-function uid() {
-  return `goal_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+type ViewMode = 'setup' | 'questions' | 'preview';
+
+function clamp(value: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, value));
 }
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <View style={styles.sectionCard}>
-      <Text style={styles.sectionTitle}>{title}</Text>
-      {children}
-    </View>
-  );
+function curvedCount(level: number, min: number, max: number) {
+  const safe = clamp(level, 1, 10);
+  const t = (safe - 1) / 9;
+  const curved = (Math.exp(2.4 * t) - 1) / (Math.exp(2.4) - 1);
+  return Math.round(min + curved * (max - min));
 }
 
-function StepList({ steps }: { steps: PlannerExecutionStep[] }) {
-  if (!steps.length) return null;
-
-  return (
-    <View style={{ marginTop: 10, gap: 12 }}>
-      {steps.map((step, index) => (
-        <View key={step.id} style={styles.stepCard}>
-          <View style={styles.stepHeader}>
-            <View style={styles.stepNumber}>
-              <Text style={styles.stepNumberText}>{index + 1}</Text>
-            </View>
-            <Text style={styles.stepTitle}>{step.title}</Text>
-          </View>
-
-          <Text style={styles.stepText}>{step.explanation}</Text>
-
-          {step.checklist?.length ? (
-            <View style={{ marginTop: 10, gap: 8 }}>
-              {step.checklist.map((item) => (
-                <View key={item.id} style={styles.stepChecklistItem}>
-                  <View style={styles.stepDot} />
-                  <Text style={styles.stepChecklistText}>{item.label}</Text>
-                </View>
-              ))}
-            </View>
-          ) : null}
-        </View>
-      ))}
-    </View>
-  );
+function questionCountForDifficulty(level: number) {
+  return curvedCount(level, 5, 40);
 }
 
-export default function PsycheScreen() {
-  const [mode, setMode] = useState<Mode>('start');
-  const [phase, setPhase] = useState<Phase>('idle');
+function stepCountForDifficulty(level: number) {
+  return curvedCount(level, 10, 50);
+}
 
-  const [goalText, setGoalText] = useState('');
-  const [refinement, setRefinement] = useState<GoalRefinementResponse | null>(null);
-  const [questions, setQuestions] = useState<GoalQuestion[]>([]);
-  const [answers, setAnswers] = useState<GoalAnswerMap>({});
-  const [planner, setPlanner] = useState<PlannerBundle | null>(null);
+function uid(prefix: string) {
+  return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+}
 
-  const loading = phase !== 'idle';
+function difficultyLabel(level: number) {
+  if (level <= 2) return 'leicht';
+  if (level <= 4) return 'machbar';
+  if (level <= 6) return 'fordernd';
+  if (level <= 8) return 'hart';
+  return 'extrem anspruchsvoll';
+}
 
-  const executionSteps = useMemo(() => planner?.executionSteps ?? [], [planner]);
+function answerToString(value: string | string[] | undefined) {
+  if (Array.isArray(value)) return value.join(', ');
+  return value ?? '';
+}
 
-  function resetAll() {
-    setMode('start');
-    setPhase('idle');
-    setGoalText('');
-    setRefinement(null);
-    setQuestions([]);
-    setAnswers({});
-    setPlanner(null);
-  }
+function answerToNumber(value: string | string[] | undefined, fallback = 0) {
+  const raw = Array.isArray(value) ? value[0] : value;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
 
-  function setAnswer(id: string, value: string | string[]) {
-    setAnswers((prev) => ({ ...prev, [id]: value }));
-  }
+function mapChecklistToMiniSteps(steps: PlannerExecutionStep[]) {
+  return steps.map((step, index) => {
+    const status: GoalMiniStepStatus =
+      (step.checklist ?? []).every((item) => item.done)
+        ? 'done'
+        : index === 0
+          ? 'active'
+          : 'upcoming';
 
-  function toggleMulti(id: string, optionId: string) {
-    const current = Array.isArray(answers[id]) ? (answers[id] as string[]) : [];
-    const next = current.includes(optionId)
-      ? current.filter((v) => v !== optionId)
-      : [...current, optionId];
-
-    setAnswer(id, next);
-  }
-
-  function allRequiredFilled() {
-    return questions.every((question) => {
-      if (!question.required) return true;
-      const value = answers[question.id];
-      if (Array.isArray(value)) return value.length > 0;
-      return typeof value === 'string' ? value.trim().length > 0 : typeof value === 'number';
-    });
-  }
-
-  async function saveCurrentPlan(currentPlanner: PlannerBundle, currentRefinement: GoalRefinementResponse | null) {
-    const raw = await AsyncStorage.getItem(PLAN_STORAGE_KEY);
-    const current: StoredGoalPlan[] = raw ? JSON.parse(raw) : [];
-
-    const nextEntry: StoredGoalPlan = {
-      id: uid(),
-      title: goalText.trim() || currentRefinement?.goalLabel || 'Neues Ziel',
-      createdAt: new Date().toISOString(),
-      refinement: currentRefinement,
-      planner: currentPlanner,
+    return {
+      id: step.id,
+      order: step.order,
+      title: step.title,
+      description: step.explanation,
+      done: (step.checklist ?? []).every((item) => item.done),
+      status,
     };
+  });
+}
 
-    const next = [nextEntry, ...current.filter((item) => item.title !== nextEntry.title)];
-    await AsyncStorage.setItem(PLAN_STORAGE_KEY, JSON.stringify(next));
+function computeProgressPercent(steps: PlannerExecutionStep[]) {
+  const items = steps.flatMap((step) => step.checklist ?? []);
+  if (!items.length) return 0;
+  const done = items.filter((item) => item.done).length;
+  return Math.round((done / items.length) * 100);
+}
+
+function inferIntensityPreset(level: number): 'gentle' | 'balanced' | 'aggressive' {
+  if (level <= 3) return 'gentle';
+  if (level <= 7) return 'balanced';
+  return 'aggressive';
+}
+
+function isoToDayLabel(iso: string) {
+  return dayjs(iso).format('dd, DD.MM.');
+}
+
+function isoToTimeLabel(iso: string) {
+  return dayjs(iso).format('HH:mm');
+}
+
+function durationMinutes(start: string, end: string) {
+  return Math.max(dayjs(end).diff(dayjs(start), 'minute'), 0);
+}
+
+function dedupeByTitle<T extends { title: string }>(items: T[]) {
+  const seen = new Set<string>();
+  return items.filter((item) => {
+    const key = item.title.trim().toLowerCase();
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function pickBestTime(answer: string | string[] | undefined) {
+  const value = answerToString(answer).toLowerCase();
+  if (value.includes('morg')) return 'morning';
+  if (value.includes('nach')) return 'afternoon';
+  if (value.includes('abend')) return 'evening';
+  if (value === 'morning' || value === 'afternoon' || value === 'evening') return value;
+  return 'mixed';
+}
+
+function bestHourForTime(bestTime: string) {
+  if (bestTime === 'morning') return 7;
+  if (bestTime === 'afternoon') return 16;
+  if (bestTime === 'evening') return 19;
+  return 18;
+}
+
+function parseGoalTargetDate(targetDate: string) {
+  const parsed = dayjs(targetDate);
+  if (parsed.isValid()) {
+    return parsed.endOf('day');
   }
+  return dayjs().add(90, 'day').endOf('day');
+}
 
-  async function startRefinement() {
-    if (!goalText.trim()) {
-      Alert.alert('Ziel fehlt', 'Bitte gib zuerst ein Ziel ein.');
-      return;
-    }
+function pickWeekdays(daysPerWeek: number) {
+  if (daysPerWeek >= 7) return [1, 2, 3, 4, 5, 6, 0];
+  if (daysPerWeek === 6) return [1, 2, 3, 4, 5, 6];
+  if (daysPerWeek === 5) return [1, 2, 3, 4, 5];
+  if (daysPerWeek === 4) return [1, 2, 4, 6];
+  if (daysPerWeek === 3) return [1, 3, 5];
+  if (daysPerWeek === 2) return [2, 5];
+  return [3];
+}
 
-    try {
-      setPhase('refine');
+function buildRepeatedCalendarBlocks(params: {
+  title: string;
+  shortTitle?: string;
+  reason: string;
+  description?: string;
+  targetDate: string;
+  weekdays: number[];
+  startHour: number;
+  startMinute?: number;
+  durationMinutes: number;
+  startFromTomorrow?: boolean;
+  maxOccurrences?: number;
+}): GoalCalendarBlockPlan[] {
+  const {
+    title,
+    shortTitle,
+    reason,
+    description,
+    targetDate,
+    weekdays,
+    startHour,
+    startMinute = 0,
+    durationMinutes,
+    startFromTomorrow = true,
+    maxOccurrences = 240,
+  } = params;
 
-      const result = await fetchGoalRefinement({
-        goal: goalText.trim(),
-        pastGoals: [],
-        profile: {
-          energyWindow: 'mixed',
-          planningStyle: 'mixed',
-          startStyle: 'balanced',
-          frictionPoints: [],
-          motivationDrivers: [],
-          preferredSessionMinutes: 45,
-          consistencyScore: 50,
-          completionStyle: 'small_steps',
-          successfulPatterns: [],
-          failedPatterns: [],
-        },
+  const result: GoalCalendarBlockPlan[] = [];
+  const endDate = parseGoalTargetDate(targetDate);
+  let cursor = startFromTomorrow ? dayjs().add(1, 'day').startOf('day') : dayjs().startOf('day');
+
+  while (cursor.isBefore(endDate) || cursor.isSame(endDate, 'day')) {
+    if (weekdays.includes(cursor.day())) {
+      const start = cursor.hour(startHour).minute(startMinute).second(0).millisecond(0);
+      const end = start.add(durationMinutes, 'minute');
+
+      result.push({
+        id: uid('cal'),
+        title,
+        shortTitle: shortTitle ?? title,
+        reason,
+        start: start.toISOString(),
+        end: end.toISOString(),
+        dayLabel: isoToDayLabel(start.toISOString()),
+        startTime: isoToTimeLabel(start.toISOString()),
+        durationMinutes,
+        description,
       });
 
-      setRefinement(result);
-      setQuestions(result.questions);
-      setAnswers({});
-      setPlanner(null);
-      setMode('questions');
-    } catch (error) {
-      console.error(error);
-      Alert.alert('KI-Fehler', 'Die Fragen konnten nicht geladen werden.');
-    } finally {
-      setPhase('idle');
+      if (result.length >= maxOccurrences) break;
     }
+
+    cursor = cursor.add(1, 'day');
   }
 
-  async function generatePlan() {
-    if (!allRequiredFilled()) {
-      Alert.alert('Unvollständig', 'Bitte beantworte zuerst alle Pflichtfragen.');
-      return;
-    }
+  return result;
+}
 
-    try {
-      setPhase('plan');
+function buildWeeklyReviewBlock(params: {
+  title: string;
+  reason: string;
+  description?: string;
+  targetDate: string;
+  weekday?: number;
+  hour?: number;
+  minute?: number;
+  durationMinutes?: number;
+}): GoalCalendarBlockPlan[] {
+  return buildRepeatedCalendarBlocks({
+    title: params.title,
+    shortTitle: params.title,
+    reason: params.reason,
+    description: params.description,
+    targetDate: params.targetDate,
+    weekdays: [params.weekday ?? 0],
+    startHour: params.hour ?? 20,
+    startMinute: params.minute ?? 0,
+    durationMinutes: params.durationMinutes ?? 20,
+    maxOccurrences: 80,
+  });
+}
 
-      const result = await fetchPlannerBundle({
-        goals: [],
-        profile: {
-          discipline: 50,
-          consistency: 50,
-          focus: 50,
-          planning: 50,
-          recovery: 50,
-          momentum: 50,
-        },
-        signals: {
-          habitCheckinsToday: 0,
-          habitCheckins7d: 0,
-          habitActiveDays7d: 0,
-          tasksDoneToday: 0,
-          tasksDone7d: 0,
-          tasksTotal7d: 0,
-          calendarHoursToday: 0,
-          calendarHours7d: 0,
-          calendarEarlyStartScore: 0,
-          momentum7d: 0,
-        },
-        freeSlots: [
-          {
-            start: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
-            end: new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString(),
-            durationMinutes: 60,
-          },
-        ],
-        answers,
-        userPlanningProfile: {
-          energyWindow: 'mixed',
-          planningStyle: 'mixed',
-          startStyle: 'balanced',
-          frictionPoints: [],
-          motivationDrivers: [],
-          preferredSessionMinutes: 45,
-          consistencyScore: 50,
-          completionStyle: 'small_steps',
-          successfulPatterns: [],
-          failedPatterns: [],
-        },
-      });
+function fitnessPlanFromAnswers(
+  bundle: PlannerBundle,
+  difficultyLevel: number,
+  answers: GoalAnswerMap,
+  targetDate: string,
+): GoalExecutionPlan {
+  const currentWeight = answerToNumber(answers.current_weight, 0);
+  const targetWeight = answerToNumber(answers.target_weight, 0);
+  const daysPerWeek = clamp(answerToNumber(answers.days_per_week, difficultyLevel >= 8 ? 5 : 4), 2, 7);
+  const minutesPerDay = clamp(answerToNumber(answers.minutes_per_day, difficultyLevel >= 8 ? 60 : 40), 20, 120);
+  const trainingStatus = answerToString(answers.training_status);
+  const activityLevel = answerToString(answers.activity_level);
+  const bestTime = pickBestTime(answers.best_time);
+  const nutritionPattern = answerToString(answers.nutrition_pattern);
+  const mainProblems = Array.isArray(answers.main_nutrition_problems)
+    ? answers.main_nutrition_problems
+    : [];
 
-      setPlanner(result);
-      await saveCurrentPlan(result, refinement);
-      setMode('plan');
-    } catch (error) {
-      console.error(error);
-      Alert.alert('KI-Fehler', 'Der Plan konnte nicht erzeugt werden.');
-    } finally {
-      setPhase('idle');
-    }
+  const weightToLose =
+    currentWeight > 0 && targetWeight > 0 && currentWeight > targetWeight
+      ? currentWeight - targetWeight
+      : 0;
+
+  const estimatedCalories =
+    currentWeight > 0
+      ? clamp(
+          Math.round(
+            currentWeight * 22 +
+              (activityLevel === 'high' ? 450 : activityLevel === 'moderate' ? 250 : 100) -
+              (weightToLose > 0 ? 450 : 250),
+          ),
+          1400,
+          3200,
+        )
+      : 2200;
+
+  const proteinTarget =
+    currentWeight > 0
+      ? clamp(Math.round(currentWeight * 1.8), 110, 240)
+      : 160;
+
+  const stepsTarget =
+    activityLevel === 'very_low'
+      ? 9000
+      : activityLevel === 'low'
+        ? 8500
+        : activityLevel === 'moderate'
+          ? 10000
+          : 11000;
+
+  const waterLiters =
+    currentWeight > 0 ? Math.max(2, Math.round(currentWeight * 0.035 * 10) / 10) : 2.5;
+
+  const trainingMinutes =
+    trainingStatus === 'none'
+      ? Math.min(45, minutesPerDay)
+      : Math.min(60, minutesPerDay);
+
+  const baseHour = bestHourForTime(bestTime);
+  const trainingWeekdays = pickWeekdays(daysPerWeek);
+
+  const todos = dedupeByTitle([
+    {
+      id: uid('todo'),
+      title: `Kalorienziel auf ca. ${estimatedCalories} kcal festlegen`,
+      shortTitle: 'Kalorienziel',
+      reason: 'Ein täglicher Rahmen macht das Defizit konkret und steuerbar.',
+      note: `Starte mit ungefähr ${estimatedCalories} kcal pro Tag und prüfe die Entwicklung wöchentlich.`,
+      priority: 'high' as const,
+    },
+    {
+      id: uid('todo'),
+      title: `${proteinTarget} g Protein pro Tag absichern`,
+      shortTitle: 'Proteinziel',
+      reason: 'Protein hilft bei Sättigung und Muskelerhalt während des Defizits.',
+      note: 'Definiere 2 bis 4 feste Eiweißquellen für deinen Alltag.',
+      priority: 'high' as const,
+    },
+    {
+      id: uid('todo'),
+      title: `${stepsTarget.toLocaleString('de-DE')} Schritte als Tagesziel setzen`,
+      shortTitle: 'Schrittziel',
+      reason: 'Alltagsbewegung erhöht deinen Verbrauch und stabilisiert den Fettverlust.',
+      note: 'Plane bewusste Gehstrecken statt nur auf spontane Bewegung zu hoffen.',
+      priority: 'medium' as const,
+    },
+    {
+      id: uid('todo'),
+      title: `${daysPerWeek} feste Trainingstage bis zum Ziel einplanen`,
+      shortTitle: 'Training planen',
+      reason: 'Ohne feste Slots bleibt Training schnell unverbindlich.',
+      note: `Plane je Einheit ungefähr ${trainingMinutes} Minuten ein und halte den Rhythmus bis zum Zieldatum.`,
+      priority: 'high' as const,
+    },
+    {
+      id: uid('todo'),
+      title: '3 Ernährungsregeln für problematische Situationen festlegen',
+      shortTitle: 'Essensregeln',
+      reason: 'Klare Regeln schlagen spontane Willenskraft.',
+      note:
+        nutritionPattern || mainProblems.length
+          ? `Achte besonders auf: ${nutritionPattern || mainProblems.join(', ')}`
+          : 'Fokussiere Snacks, Portionen und abendliches Essen.',
+      priority: 'high' as const,
+    },
+    {
+      id: uid('todo'),
+      title: bundle.primary.todo.title,
+      shortTitle: bundle.primary.todo.title,
+      reason: bundle.primary.todo.reason,
+      note: bundle.primary.todo.instruction ?? bundle.primary.todo.expectedEffect,
+      priority: 'medium' as const,
+    },
+  ]);
+
+  const habits = dedupeByTitle([
+    {
+      id: uid('habit'),
+      title: 'Training durchziehen',
+      shortTitle: 'Training',
+      reason: 'Regelmäßiges Training ist der körperliche Haupttreiber deines Plans.',
+      description: `${daysPerWeek} Einheiten pro Woche mit ungefähr ${trainingMinutes} Minuten bis zum Zieltermin.`,
+      details: 'Zieh die fest geplanten Einheiten wirklich durch, statt spontan zu entscheiden.',
+      frequencyPerWeek: daysPerWeek,
+      durationMinutes: trainingMinutes,
+      targetPerDay: 1,
+      cadence: 'weekly' as const,
+    },
+    {
+      id: uid('habit'),
+      title: `${stepsTarget.toLocaleString('de-DE')} Schritte erreichen`,
+      shortTitle: 'Schritte',
+      reason: 'Bewegung außerhalb des Trainings stabilisiert dein Defizit.',
+      description: 'Nutze Spaziergänge, Wege und aktive Alltagsmomente.',
+      details: 'Wenn du deutlich darunter liegst, plane bewusst einen zusätzlichen Gehblock.',
+      frequencyPerWeek: 7,
+      durationMinutes: 30,
+      targetPerDay: 1,
+      cadence: 'daily' as const,
+    },
+    {
+      id: uid('habit'),
+      title: `${waterLiters} Liter Wasser trinken`,
+      shortTitle: 'Wasser',
+      reason: 'Wasser unterstützt Sättigung, Energie und Trainingsqualität.',
+      description: `Trinke ungefähr ${waterLiters} Liter pro Tag bis zum Zieltermin.`,
+      details: 'Verteile das Wasser über den Tag statt alles abends zu trinken.',
+      frequencyPerWeek: 7,
+      durationMinutes: 0,
+      targetPerDay: 1,
+      cadence: 'daily' as const,
+    },
+    {
+      id: uid('habit'),
+      title: `${proteinTarget} g Protein einhalten`,
+      shortTitle: 'Protein',
+      reason: 'Protein verbessert Sättigung und Muskelerhalt.',
+      description: 'Baue in jede Hauptmahlzeit eine klare Proteinquelle ein.',
+      details: 'Nicht perfekt, aber im Wochenschnitt möglichst nah am Ziel.',
+      frequencyPerWeek: 7,
+      durationMinutes: 0,
+      targetPerDay: 1,
+      cadence: 'daily' as const,
+    },
+    {
+      id: uid('habit'),
+      title: 'Wöchentlicher Fettverlust-Check',
+      shortTitle: 'Check',
+      reason: 'Nur ein Wochencheck zeigt dir, ob dein System wirklich funktioniert.',
+      description: 'Gewicht, Ernährung, Schritte und Training 1x pro Woche prüfen.',
+      details: 'Passe nie täglich hektisch an. Werte lieber wöchentlich aus.',
+      frequencyPerWeek: 1,
+      durationMinutes: 20,
+      targetPerDay: 1,
+      cadence: 'weekly' as const,
+    },
+  ]);
+
+  const calendarBlocks = dedupeByTitle([
+    ...buildRepeatedCalendarBlocks({
+      title: 'Trainingseinheit',
+      shortTitle: 'Training',
+      reason: 'Feste Trainingseinheiten machen dein Ziel dauerhaft umsetzbar.',
+      description: `Führe in diesem Block dein geplantes Training sauber durch. Ziel: ${daysPerWeek} Einheiten pro Woche bis ${dayjs(targetDate).format('DD.MM.YYYY')}.`,
+      targetDate,
+      weekdays: trainingWeekdays,
+      startHour: baseHour,
+      durationMinutes: trainingMinutes,
+      maxOccurrences: 220,
+    }),
+    ...buildRepeatedCalendarBlocks({
+      title: 'Schritt- oder Spazierblock',
+      shortTitle: 'Schritte',
+      reason: 'Gezielte Alltagsbewegung hält deine Wochenkonstanz stabil.',
+      description: `Zusätzliche Bewegung einplanen, damit das Tagesziel von ${stepsTarget.toLocaleString('de-DE')} Schritten erreichbar wird.`,
+      targetDate,
+      weekdays: [1, 3, 5],
+      startHour: baseHour + 1 <= 21 ? baseHour + 1 : baseHour,
+      durationMinutes: 25,
+      maxOccurrences: 120,
+    }),
+    ...buildWeeklyReviewBlock({
+      title: 'Wochencheck Fettverlust',
+      reason: 'Gewicht, Konstanz und Ernährung müssen jede Woche ehrlich überprüft werden.',
+      description: 'Gewicht, Training, Schritte und Ernährung kurz auswerten und den nächsten Wochenhebel bestimmen.',
+      targetDate,
+      weekday: 0,
+      hour: 20,
+      minute: 0,
+      durationMinutes: 20,
+    }),
+  ]);
+
+  return {
+    summary:
+      bundle.planMeta?.summary ??
+      `Fettverlust-Plan mit ungefähr ${estimatedCalories} kcal, ${proteinTarget} g Protein, ${stepsTarget.toLocaleString('de-DE')} Schritten und ${daysPerWeek} Trainingstagen pro Woche bis ${dayjs(targetDate).format('DD.MM.YYYY')}.`,
+    intensityPreset: inferIntensityPreset(difficultyLevel),
+    todos,
+    habits,
+    calendarBlocks,
+    steps: bundle.executionSteps ?? [],
+    sourceBundle: bundle,
+  };
+}
+
+function researchStudyPlanFromAnswers(
+  bundle: PlannerBundle,
+  difficultyLevel: number,
+  answers: GoalAnswerMap,
+  goalType: GoalCategory,
+  targetDate: string,
+): GoalExecutionPlan {
+  const weeklyHours = clamp(answerToNumber(answers.weekly_hours, difficultyLevel >= 8 ? 14 : 8), 3, 40);
+  const bestTime = pickBestTime(answers.best_time);
+  const baseHour = bestHourForTime(bestTime);
+  const blockMinutes = difficultyLevel >= 8 ? 120 : difficultyLevel >= 5 ? 90 : 60;
+  const focusBlocks = Math.max(2, Math.min(6, Math.round(weeklyHours / 3)));
+  const topicFixed = answerToString(answers.topic_fixed);
+  const currentStatus = answerToString(answers.current_status);
+  const bottleneck = Array.isArray(answers.main_bottleneck)
+    ? answers.main_bottleneck.join(', ')
+    : answerToString(answers.main_bottleneck);
+  const focusWeekdays = pickWeekdays(focusBlocks);
+
+  const todos = dedupeByTitle([
+    {
+      id: uid('todo'),
+      title:
+        topicFixed === 'no' || topicFixed === 'rough'
+          ? 'Thema und Scope sauber eingrenzen'
+          : 'Aktuellen Arbeitsstand schriftlich strukturieren',
+      shortTitle: 'Scope klären',
+      reason: 'Große Wissens- oder Forschungsziele scheitern oft an unklarem Scope.',
+      note: currentStatus || 'Formuliere ehrlich, was schon steht und was noch fehlt.',
+      priority: 'high' as const,
+    },
+    {
+      id: uid('todo'),
+      title: 'Literatur- oder Materialbasis priorisieren',
+      shortTitle: 'Basis priorisieren',
+      reason: 'Die richtige Reihenfolge spart Wochen an ineffizienter Arbeit.',
+      note: 'Bestimme Kernquellen, Pflichtmaterial oder den wichtigsten Arbeitsblock.',
+      priority: 'high' as const,
+    },
+    {
+      id: uid('todo'),
+      title: 'Wochenstruktur für Tiefenarbeit bis zum Ziel fixieren',
+      shortTitle: 'Fokusblöcke',
+      reason: 'Ohne feste Fokusblöcke bleibt komplexe Denk- und Schreibarbeit liegen.',
+      note: `${focusBlocks} Fokusblöcke pro Woche mit je ungefähr ${blockMinutes} Minuten bis ${dayjs(targetDate).format('DD.MM.YYYY')}.`,
+      priority: 'high' as const,
+    },
+    {
+      id: uid('todo'),
+      title:
+        goalType === 'research'
+          ? 'Kapitel- oder Forschungsstruktur aufbauen'
+          : 'Lern- oder Arbeitsstruktur aufbauen',
+      shortTitle: 'Struktur bauen',
+      reason: 'Struktur reduziert Überforderung und macht Fortschritt sichtbar.',
+      note: bottleneck ? `Achte besonders auf den Engpass: ${bottleneck}` : 'Arbeite vom größten Engpass aus.',
+      priority: 'medium' as const,
+    },
+    {
+      id: uid('todo'),
+      title: bundle.primary.todo.title,
+      shortTitle: bundle.primary.todo.title,
+      reason: bundle.primary.todo.reason,
+      note: bundle.primary.todo.instruction ?? bundle.primary.todo.expectedEffect,
+      priority: 'medium' as const,
+    },
+  ]);
+
+  const habits = dedupeByTitle([
+    {
+      id: uid('habit'),
+      title: 'Tiefenarbeitsblock durchziehen',
+      shortTitle: 'Deep Work',
+      reason: 'Komplexe kognitive Arbeit braucht wiederholte konzentrierte Blöcke.',
+      description: `${focusBlocks} Blöcke pro Woche mit ${blockMinutes} Minuten bis zum Zieltermin.`,
+      details: 'Nur die wichtigste Denk-, Lese-, Analyse- oder Schreibaufgabe bearbeiten.',
+      frequencyPerWeek: focusBlocks,
+      durationMinutes: blockMinutes,
+      targetPerDay: 1,
+      cadence: 'weekly' as const,
+    },
+    {
+      id: uid('habit'),
+      title: 'Arbeitsstand kurz dokumentieren',
+      shortTitle: 'Logbuch',
+      reason: 'Ein kurzes Protokoll hält den Faden zwischen den Sessions.',
+      description: 'Nach jedem Fokusblock kurz notieren, was fertig ist und was als Nächstes kommt.',
+      details: 'So startest du die nächste Einheit schneller und klarer.',
+      frequencyPerWeek: focusBlocks,
+      durationMinutes: 10,
+      targetPerDay: 1,
+      cadence: 'weekly' as const,
+    },
+    {
+      id: uid('habit'),
+      title: 'Wöchentlicher Review des Hauptengpasses',
+      shortTitle: 'Review',
+      reason: 'Große Projekte brauchen regelmäßige Kurskorrekturen.',
+      description: '1x pro Woche prüfen: Was blockiert? Was ist der nächste Hebel?',
+      details: 'Nicht alles bewerten, sondern den wichtigsten Flaschenhals angehen.',
+      frequencyPerWeek: 1,
+      durationMinutes: 20,
+      targetPerDay: 1,
+      cadence: 'weekly' as const,
+    },
+  ]);
+
+  const calendarBlocks = dedupeByTitle([
+    ...buildRepeatedCalendarBlocks({
+      title: goalType === 'research' ? 'Forschungsblock' : 'Lernblock',
+      shortTitle: 'Fokus',
+      reason: 'Wiederholte Fokusblöcke machen große Wissensarbeit realistisch.',
+      description: `Nur die wichtigste intellektuelle Hauptaufgabe bearbeiten. Zielrhythmus bis ${dayjs(targetDate).format('DD.MM.YYYY')}.`,
+      targetDate,
+      weekdays: focusWeekdays,
+      startHour: baseHour,
+      durationMinutes: blockMinutes,
+      maxOccurrences: 220,
+    }),
+    ...buildWeeklyReviewBlock({
+      title: 'Wochenreview',
+      reason: 'Ein fixer Review-Termin hält den Plan ehrlich und anpassbar.',
+      description: 'Fortschritt, Engpässe und nächste Schwerpunktphase prüfen.',
+      targetDate,
+      weekday: 0,
+      hour: 19,
+      minute: 30,
+      durationMinutes: 20,
+    }),
+  ]);
+
+  return {
+    summary:
+      bundle.planMeta?.summary ??
+      `Strukturierter ${goalType === 'research' ? 'Forschungs-' : 'Lern-'}Plan mit ${focusBlocks} Fokusblöcken pro Woche bis ${dayjs(targetDate).format('DD.MM.YYYY')}.`,
+    intensityPreset: inferIntensityPreset(difficultyLevel),
+    todos,
+    habits,
+    calendarBlocks,
+    steps: bundle.executionSteps ?? [],
+    sourceBundle: bundle,
+  };
+}
+
+function businessProjectPlanFromAnswers(
+  bundle: PlannerBundle,
+  difficultyLevel: number,
+  answers: GoalAnswerMap,
+  goalType: GoalCategory,
+  targetDate: string,
+): GoalExecutionPlan {
+  const weeklyHours = clamp(answerToNumber(answers.weekly_hours, difficultyLevel >= 8 ? 12 : 7), 3, 40);
+  const bestTime = pickBestTime(answers.best_time);
+  const baseHour = bestHourForTime(bestTime);
+  const focusBlocks = Math.max(2, Math.min(6, Math.round(weeklyHours / 3)));
+  const blockMinutes = difficultyLevel >= 8 ? 100 : 75;
+  const offer = answerToString(answers.offer);
+  const targetGroup = answerToString(answers.target_group);
+  const salesStatus = answerToString(answers.sales_status);
+  const focusWeekdays = pickWeekdays(focusBlocks);
+
+  const todos = dedupeByTitle([
+    {
+      id: uid('todo'),
+      title:
+        goalType === 'business'
+          ? 'Angebot und Zielgruppe glasklar formulieren'
+          : 'Projektziel und Scope klar festziehen',
+      shortTitle: 'Klarheit',
+      reason: 'Ohne Klarheit verzettelst du dich sehr schnell in Nebenbaustellen.',
+      note: [offer, targetGroup].filter(Boolean).join(' · ') || 'Schreibe messbar auf, was du für wen erreichen willst.',
+      priority: 'high' as const,
+    },
+    {
+      id: uid('todo'),
+      title:
+        goalType === 'business'
+          ? 'Vertriebs- oder Validierungssystem für die gesamte Laufzeit festlegen'
+          : 'Wichtigste Umsetzungsphase bis zum Ziel strukturieren',
+      shortTitle: 'Wochensystem',
+      reason: 'Ein klares Wochensystem macht Fortschritt reproduzierbar.',
+      note: salesStatus || `Lege fest, welche operative Aktivität bis ${dayjs(targetDate).format('DD.MM.YYYY')} jede Woche passieren muss.`,
+      priority: 'high' as const,
+    },
+    {
+      id: uid('todo'),
+      title: 'Hauptengpass gezielt entschärfen',
+      shortTitle: 'Engpass',
+      reason: 'Der größte Engpass entscheidet, ob das Ziel Fahrt aufnimmt oder stehenbleibt.',
+      note: 'Bearbeite zuerst nur den einen Flaschenhals mit der höchsten Hebelwirkung.',
+      priority: 'medium' as const,
+    },
+    {
+      id: uid('todo'),
+      title: bundle.primary.todo.title,
+      shortTitle: bundle.primary.todo.title,
+      reason: bundle.primary.todo.reason,
+      note: bundle.primary.todo.instruction ?? bundle.primary.todo.expectedEffect,
+      priority: 'medium' as const,
+    },
+  ]);
+
+  const habits = dedupeByTitle([
+    {
+      id: uid('habit'),
+      title: goalType === 'business' ? 'Business-Execution-Block' : 'Projekt-Execution-Block',
+      shortTitle: 'Execution',
+      reason: 'Kontinuierliche operative Umsetzung schlägt gelegentliche Motivationsspitzen.',
+      description: `${focusBlocks} Blöcke pro Woche mit ${blockMinutes} Minuten bis zum Zieltermin.`,
+      details: 'Nur die aktuell wichtigste Wachstums-, Vertriebs- oder Umsetzungsaufgabe bearbeiten.',
+      frequencyPerWeek: focusBlocks,
+      durationMinutes: blockMinutes,
+      targetPerDay: 1,
+      cadence: 'weekly' as const,
+    },
+    {
+      id: uid('habit'),
+      title: 'Wöchentlicher Output-Review',
+      shortTitle: 'Review',
+      reason: 'Du brauchst sichtbare Outputs, nicht nur Beschäftigung.',
+      description: '1x pro Woche prüfen: Was wurde wirklich produziert oder validiert?',
+      details: 'Messe an Ergebnissen statt an gefühlter Anstrengung.',
+      frequencyPerWeek: 1,
+      durationMinutes: 20,
+      targetPerDay: 1,
+      cadence: 'weekly' as const,
+    },
+  ]);
+
+  const calendarBlocks = dedupeByTitle([
+    ...buildRepeatedCalendarBlocks({
+      title: goalType === 'business' ? 'Business-Block' : 'Projekt-Block',
+      shortTitle: 'Block',
+      reason: 'Mehrere feste Blocks pro Woche machen dein Ziel operativ.',
+      description: `Bearbeite in diesem Block nur den wichtigsten Hebel der Woche. Laufzeit bis ${dayjs(targetDate).format('DD.MM.YYYY')}.`,
+      targetDate,
+      weekdays: focusWeekdays,
+      startHour: baseHour,
+      durationMinutes: blockMinutes,
+      maxOccurrences: 220,
+    }),
+    ...buildWeeklyReviewBlock({
+      title: 'Wochenreview Output',
+      reason: 'Ein fixer Review-Termin hält die Umsetzungsqualität hoch.',
+      description: 'Outputs, Engpässe und den nächsten Wochenhebel prüfen.',
+      targetDate,
+      weekday: 0,
+      hour: 19,
+      minute: 45,
+      durationMinutes: 20,
+    }),
+  ]);
+
+  return {
+    summary:
+      bundle.planMeta?.summary ??
+      `Operativer ${goalType === 'business' ? 'Business-' : 'Projekt-'}Plan mit ${focusBlocks} Fokusblöcken pro Woche bis ${dayjs(targetDate).format('DD.MM.YYYY')}.`,
+    intensityPreset: inferIntensityPreset(difficultyLevel),
+    todos,
+    habits,
+    calendarBlocks,
+    steps: bundle.executionSteps ?? [],
+    sourceBundle: bundle,
+  };
+}
+
+function genericPlanFromBundle(
+  bundle: PlannerBundle,
+  difficultyLevel: number,
+  answers: GoalAnswerMap,
+  targetDate: string,
+): GoalExecutionPlan {
+  const weeklyHours = clamp(answerToNumber(answers.weekly_hours, difficultyLevel >= 8 ? 10 : 6), 2, 30);
+  const focusBlocks = Math.max(2, Math.min(5, Math.round(weeklyHours / 3)));
+  const blockMinutes = difficultyLevel >= 8 ? 90 : 60;
+  const bestTime = pickBestTime(answers.best_time);
+  const baseHour = bestHourForTime(bestTime);
+  const focusWeekdays = pickWeekdays(focusBlocks);
+
+  const todos = dedupeByTitle([
+    {
+      id: uid('todo'),
+      title: bundle.primary.todo.title,
+      shortTitle: bundle.primary.todo.title,
+      reason: bundle.primary.todo.reason,
+      note: bundle.primary.todo.instruction ?? bundle.primary.todo.expectedEffect,
+      priority: 'high' as const,
+    },
+    {
+      id: uid('todo'),
+      title: 'Wöchentliche Umsetzungsstruktur festziehen',
+      shortTitle: 'Struktur',
+      reason: 'Ein gutes Zielsystem lebt von einem haltbaren Wochenrhythmus.',
+      note: `Plane ${focusBlocks} feste Fokusblöcke pro Woche bis ${dayjs(targetDate).format('DD.MM.YYYY')}.`,
+      priority: 'medium' as const,
+    },
+  ]);
+
+  const habits = dedupeByTitle([
+    {
+      id: uid('habit'),
+      title: bundle.primary.habit.title,
+      shortTitle: bundle.primary.habit.title,
+      reason: bundle.primary.habit.reason,
+      description: bundle.primary.habit.instruction,
+      details: bundle.primary.habit.expectedEffect,
+      frequencyPerWeek: focusBlocks,
+      durationMinutes: blockMinutes,
+      targetPerDay: 1,
+      cadence: 'weekly' as const,
+    },
+    {
+      id: uid('habit'),
+      title: 'Wöchentlicher Fortschrittscheck',
+      shortTitle: 'Review',
+      reason: 'Der Weg muss regelmäßig überprüft werden, sonst driftet das Ziel ab.',
+      description: '1x pro Woche Fortschritt, Hindernisse und nächsten Hebel prüfen.',
+      details: 'Kurz, ehrlich und mit konkreter Anpassung für die nächste Woche.',
+      frequencyPerWeek: 1,
+      durationMinutes: 20,
+      targetPerDay: 1,
+      cadence: 'weekly' as const,
+    },
+  ]);
+
+  const calendarBlocks = dedupeByTitle([
+    ...buildRepeatedCalendarBlocks({
+      title: bundle.primary.calendar.title || 'Fokusblock',
+      shortTitle: bundle.primary.calendar.title || 'Fokus',
+      reason: bundle.primary.calendar.reason || 'Ein fester Block macht dein Ziel umsetzbar.',
+      description:
+        bundle.primary.calendar.instruction ||
+        `Arbeite in diesem Block an deinem wichtigsten Zielhebel bis ${dayjs(targetDate).format('DD.MM.YYYY')}.`,
+      targetDate,
+      weekdays: focusWeekdays,
+      startHour: baseHour,
+      durationMinutes: blockMinutes,
+      maxOccurrences: 220,
+    }),
+    ...buildWeeklyReviewBlock({
+      title: 'Wochenreview',
+      reason: 'Ein fixer Review-Termin hält den Plan ehrlich.',
+      description: 'Fortschritt, Blocker und nächste Woche kurz prüfen.',
+      targetDate,
+      weekday: 0,
+      hour: 19,
+      minute: 30,
+      durationMinutes: 20,
+    }),
+  ]);
+
+  return {
+    summary:
+      bundle.planMeta?.summary ??
+      `Konkreter Plan mit wiederkehrenden Fokusblöcken bis ${dayjs(targetDate).format('DD.MM.YYYY')}.`,
+    intensityPreset: inferIntensityPreset(difficultyLevel),
+    todos,
+    habits,
+    calendarBlocks,
+    steps: bundle.executionSteps ?? [],
+    sourceBundle: bundle,
+  };
+}
+
+function bundleToExecutionPlan(
+  bundle: PlannerBundle,
+  difficultyLevel: number,
+  category: GoalCategory,
+  answers: GoalAnswerMap,
+  targetDate: string,
+): GoalExecutionPlan {
+  if (category === 'fitness') {
+    return fitnessPlanFromAnswers(bundle, difficultyLevel, answers, targetDate);
   }
 
-  async function applyAll() {
-    if (!planner) return;
-
-    try {
-      setPhase('apply');
-
-      const todos = [
-        {
-          title: planner.primary.todo.title,
-          reason: planner.primary.todo.reason,
-          note: planner.primary.todo.instruction,
-          priority: 'high' as const,
-        },
-      ];
-
-      const habits = [
-        {
-          title: planner.primary.habit.title,
-          description: planner.primary.habit.reason,
-          cadence: 'daily',
-          targetPerDay: 1,
-          durationMinutes: planner.primary.routines[0]?.durationMinutes ?? 20,
-          reason: planner.primary.habit.reason,
-        },
-        ...planner.primary.routines.map((routine) => ({
-          title: routine.title,
-          description: routine.reason,
-          cadence: 'weekly',
-          targetPerDay: 1,
-          durationMinutes: routine.durationMinutes ?? 20,
-          reason: routine.reason,
-        })),
-      ];
-
-      const calendarBlocks = [
-        {
-          title: planner.primary.calendar.title,
-          start: planner.primary.calendar.start,
-          end: planner.primary.calendar.end,
-          description: planner.primary.calendar.reason,
-          reason: planner.primary.calendar.reason,
-        },
-        ...planner.primary.routines.flatMap((routine) =>
-          routine.blocks.map((block) => ({
-            title: block.title,
-            start: block.start,
-            end: block.end,
-            description: routine.reason,
-            reason: routine.reason,
-          }))
-        ),
-      ];
-
-      await applyFullGoalPlan({
-        todos,
-        habits,
-        calendarBlocks,
-      });
-
-      Alert.alert('Übernommen', 'Todos, Habits und Kalenderblöcke wurden übernommen.');
-    } catch (error) {
-      console.error(error);
-      Alert.alert('Fehler', 'Der Plan konnte nicht übernommen werden.');
-    } finally {
-      setPhase('idle');
-    }
+  if (category === 'research' || category === 'study') {
+    return researchStudyPlanFromAnswers(bundle, difficultyLevel, answers, category, targetDate);
   }
 
-  function renderQuestion(question: GoalQuestion) {
-    const value = answers[question.id];
+  if (category === 'business' || category === 'project') {
+    return businessProjectPlanFromAnswers(bundle, difficultyLevel, answers, category, targetDate);
+  }
 
+  return genericPlanFromBundle(bundle, difficultyLevel, answers, targetDate);
+}
+
+function multiChoiceSelected(answer: string | string[] | undefined, optionId: string) {
+  return Array.isArray(answer) && answer.includes(optionId);
+}
+
+function toggleMultiChoice(
+  answers: GoalAnswerMap,
+  questionId: string,
+  optionId: string,
+): GoalAnswerMap {
+  const current = Array.isArray(answers[questionId]) ? [...(answers[questionId] as string[])] : [];
+  const next = current.includes(optionId)
+    ? current.filter((id) => id !== optionId)
+    : [...current, optionId];
+  return {
+    ...answers,
+    [questionId]: next,
+  };
+}
+
+function buildApproxMindsetProfile(
+  consistencyScore: number,
+  todoCount: number,
+  eventCount: number,
+): MindsetProfile {
+  return {
+    discipline: clamp(40 + Math.round(consistencyScore * 0.35), 20, 95),
+    consistency: clamp(consistencyScore, 15, 95),
+    focus: clamp(45 + Math.round(eventCount * 2), 20, 95),
+    planning: clamp(35 + Math.round(eventCount * 3), 15, 95),
+    recovery: 60,
+    momentum: clamp(35 + Math.round(todoCount * 1.5), 10, 95),
+  };
+}
+
+function buildApproxSignals(
+  todoDone7d: number,
+  todoTotal: number,
+  eventCount: number,
+  habitActiveDays7d: number,
+): PsycheSignals {
+  return {
+    habitCheckinsToday: 0,
+    habitCheckins7d: habitActiveDays7d,
+    habitActiveDays7d,
+    tasksDoneToday: 0,
+    tasksDone7d: todoDone7d,
+    tasksTotal7d: todoTotal,
+    calendarHoursToday: 0,
+    calendarHours7d: Math.min(eventCount * 1.5, 40),
+    calendarEarlyStartScore: 0.5,
+    momentum7d: 0.2,
+  };
+}
+
+function GoalProgressBar({ value }: { value: number }) {
+  return (
+    <View style={styles.progressTrack}>
+      <View style={[styles.progressFill, { width: `${clamp(value, 0, 100)}%` }]} />
+    </View>
+  );
+}
+
+function QuestionInput({
+  question,
+  value,
+  onChange,
+  onToggle,
+}: {
+  question: GoalQuestion;
+  value: string | string[] | undefined;
+  onChange: (next: string) => void;
+  onToggle: (optionId: string) => void;
+}) {
+  if (question.type === 'single_choice') {
     return (
-      <View key={question.id} style={styles.questionCard}>
-        <View style={styles.questionRow}>
-          <Text style={styles.questionTitle}>{question.title}</Text>
-          {question.required ? <Text style={styles.required}>Pflicht</Text> : null}
-        </View>
+      <View style={styles.optionsWrap}>
+        {(question.options ?? []).map((option: GoalQuestionOption) => {
+          const active = value === option.id;
+          return (
+            <Pressable
+              key={option.id}
+              onPress={() => onChange(option.id)}
+              style={[styles.optionChip, active && styles.optionChipActive]}
+            >
+              <Text style={[styles.optionText, active && styles.optionTextActive]}>
+                {option.label}
+              </Text>
+            </Pressable>
+          );
+        })}
+      </View>
+    );
+  }
 
-        {question.whyAsked ? (
-          <Text style={styles.questionWhy}>{question.whyAsked}</Text>
-        ) : null}
-
-        {(question.type === 'text' || question.type === 'long_text') ? (
-          <TextInput
-            value={typeof value === 'string' ? value : ''}
-            onChangeText={(text) => setAnswer(question.id, text)}
-            placeholder={question.placeholder ?? 'Antwort'}
-            placeholderTextColor="rgba(255,255,255,0.35)"
-            multiline={question.type === 'long_text'}
-            textAlignVertical={question.type === 'long_text' ? 'top' : 'center'}
-            style={[styles.input, question.type === 'long_text' && styles.textarea]}
-          />
-        ) : null}
-
-        {(question.type === 'single_choice' || question.type === 'multi_choice') ? (
-          <View style={styles.optionWrap}>
-            {question.options?.map((option) => {
-              const selected =
-                question.type === 'single_choice'
-                  ? value === option.id
-                  : Array.isArray(value) && value.includes(option.id);
-
-              return (
-                <Pressable
-                  key={option.id}
-                  onPress={() => {
-                    if (question.type === 'single_choice') {
-                      setAnswer(question.id, option.id);
-                    } else {
-                      toggleMulti(question.id, option.id);
-                    }
-                  }}
-                  style={[styles.option, selected && styles.optionSelected]}
-                >
-                  <Text style={[styles.optionText, selected && styles.optionTextSelected]}>
-                    {option.label}
-                  </Text>
-                </Pressable>
-              );
-            })}
-          </View>
-        ) : null}
+  if (question.type === 'multi_choice') {
+    return (
+      <View style={styles.optionsWrap}>
+        {(question.options ?? []).map((option: GoalQuestionOption) => {
+          const active = multiChoiceSelected(value, option.id);
+          return (
+            <Pressable
+              key={option.id}
+              onPress={() => onToggle(option.id)}
+              style={[styles.optionChip, active && styles.optionChipActive]}
+            >
+              <Text style={[styles.optionText, active && styles.optionTextActive]}>
+                {option.label}
+              </Text>
+            </Pressable>
+          );
+        })}
       </View>
     );
   }
 
   return (
+    <TextInput
+      multiline={question.type === 'long_text'}
+      value={answerToString(value)}
+      onChangeText={onChange}
+      placeholder={question.placeholder ?? 'Antwort eingeben'}
+      placeholderTextColor="rgba(255,255,255,0.35)"
+      style={[
+        styles.input,
+        question.type === 'long_text' && { minHeight: 120, textAlignVertical: 'top' },
+      ]}
+    />
+  );
+}
+
+export default function PsycheScreen() {
+  const [settings, setSettings] = useState<PsycheSettings>(DEFAULT_SETTINGS);
+  const [goals, setGoals] = useState<PsycheGoal[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const [goalTitle, setGoalTitle] = useState('');
+  const [targetDate, setTargetDate] = useState(dayjs().add(90, 'day').format('YYYY-MM-DD'));
+  const [difficultyLevel, setDifficultyLevel] = useState(5);
+
+  const [questionSet, setQuestionSet] = useState<GoalQuestion[]>([]);
+  const [questionMeta, setQuestionMeta] = useState<{
+    category?: GoalCategory | string;
+    summary?: string;
+  } | null>(null);
+  const [answers, setAnswers] = useState<GoalAnswerMap>({});
+  const [busy, setBusy] = useState<'idle' | 'refining' | 'planning' | 'applying'>('idle');
+
+  const [mode, setMode] = useState<ViewMode>('setup');
+  const [questionIndex, setQuestionIndex] = useState(0);
+  const [previewPlan, setPreviewPlan] = useState<GoalExecutionPlan | null>(null);
+
+  useEffect(() => {
+    (async () => {
+      const [savedSettings, savedGoals] = await Promise.all([
+        loadPsycheSettings(),
+        loadPsycheGoals(),
+      ]);
+      if (savedSettings) setSettings(savedSettings);
+      setGoals(savedGoals);
+      setLoading(false);
+    })();
+  }, []);
+
+  useEffect(() => {
+    savePsycheSettings(settings);
+  }, [settings]);
+
+  const targetQuestionCount = useMemo(
+    () => questionCountForDifficulty(difficultyLevel),
+    [difficultyLevel],
+  );
+
+  const targetStepCount = useMemo(
+    () => stepCountForDifficulty(difficultyLevel),
+    [difficultyLevel],
+  );
+
+  const avgProgress = useMemo(() => {
+    if (!goals.length) return 0;
+    return Math.round(goals.reduce((sum, goal) => sum + goal.progressPercent, 0) / goals.length);
+  }, [goals]);
+
+  const currentQuestion = questionSet[questionIndex];
+  const answeredCount = useMemo(() => {
+    return questionSet.filter((question) => {
+      const value = answers[question.id];
+      if (Array.isArray(value)) return value.length > 0;
+      return typeof value === 'string' && value.trim().length > 0;
+    }).length;
+  }, [answers, questionSet]);
+
+  async function buildContext(): Promise<{
+    planningProfile: UserPlanningProfile;
+    freeSlots: { start: string; end: string; durationMinutes: number }[];
+    mindsetProfile: MindsetProfile;
+    signals: PsycheSignals;
+    calendarEvents: CalendarEventLike[];
+  }> {
+    const [todo, habits, calendarEvents] = await Promise.all([
+      loadTodoStateBestEffort(),
+      loadHabitsState(),
+      loadCalendarEventsBestEffort(),
+    ]);
+
+    const planningProfile = buildUserPlanningProfile({
+      goals,
+      todo,
+      habits,
+      calendarEvents,
+    });
+
+    const freeSlots = buildFreeSlots(calendarEvents, {
+      daysAhead: 10,
+      minDurationMinutes: 25,
+      startTomorrow: true,
+    });
+
+    const doneTasks = (todo?.tasks ?? []).filter((task) => task.done).length;
+    const totalTasks = (todo?.tasks ?? []).length;
+    const habitActiveDays7d = (habits?.habits ?? []).reduce((max, habit) => {
+      const active = Object.values(habit.checkins ?? {}).filter((count) => (count ?? 0) > 0).length;
+      return Math.max(max, active);
+    }, 0);
+
+    const mindsetProfile = buildApproxMindsetProfile(
+      planningProfile.consistencyScore,
+      doneTasks,
+      calendarEvents.length,
+    );
+
+    const signals = buildApproxSignals(
+      doneTasks,
+      totalTasks,
+      calendarEvents.length,
+      habitActiveDays7d,
+    );
+
+    return {
+      planningProfile,
+      freeSlots,
+      mindsetProfile,
+      signals,
+      calendarEvents,
+    };
+  }
+
+  function resetBuilderState() {
+    setQuestionSet([]);
+    setQuestionMeta(null);
+    setAnswers({});
+    setQuestionIndex(0);
+    setPreviewPlan(null);
+    setMode('setup');
+  }
+
+  async function handleGenerateQuestions() {
+    if (!goalTitle.trim()) {
+      Alert.alert('Ziel fehlt', 'Bitte gib zuerst dein Ziel ein.');
+      return;
+    }
+
+    setBusy('refining');
+
+    try {
+      const context = await buildContext();
+
+      const refinement = await fetchGoalRefinement({
+        goal: goalTitle.trim(),
+        difficultyLevel,
+        targetDate,
+        pastGoals: goals,
+        profile: context.planningProfile,
+        existingAnswers: {},
+      });
+
+      setQuestionSet(refinement.questions);
+      setQuestionMeta({
+        category: refinement.goalType,
+        summary:
+          refinement.analysis?.rationale?.[0] ??
+          `Schwierigkeit ${difficultyLevel}/10 · ca. ${targetQuestionCount} Fragen`,
+      });
+      setAnswers({});
+      setQuestionIndex(0);
+      setPreviewPlan(null);
+      setMode('questions');
+    } catch (error: any) {
+      Alert.alert('Fehler', error?.message ?? 'Die KI-Fragen konnten nicht erzeugt werden.');
+    } finally {
+      setBusy('idle');
+    }
+  }
+
+  function validateAnswers() {
+    for (const question of questionSet) {
+      if (!question.required) continue;
+      const value = answers[question.id];
+      if (question.type === 'multi_choice') {
+        if (!Array.isArray(value) || !value.length) {
+          return question.title;
+        }
+      } else if (typeof value !== 'string' || !value.trim()) {
+        return question.title;
+      }
+    }
+    return null;
+  }
+
+  function currentQuestionAnswered() {
+    if (!currentQuestion) return true;
+    const value = answers[currentQuestion.id];
+    if (currentQuestion.type === 'multi_choice') {
+      return Array.isArray(value) && value.length > 0;
+    }
+    return typeof value === 'string' && value.trim().length > 0;
+  }
+
+  function goNextQuestion() {
+    if (!currentQuestion) return;
+    if (currentQuestion.required && !currentQuestionAnswered()) {
+      Alert.alert('Antwort fehlt', 'Bitte beantworte zuerst diese Frage.');
+      return;
+    }
+    setQuestionIndex((prev) => Math.min(prev + 1, questionSet.length - 1));
+  }
+
+  function goPrevQuestion() {
+    setQuestionIndex((prev) => Math.max(prev - 1, 0));
+  }
+
+  async function handleBuildPlan() {
+    const missing = validateAnswers();
+    if (missing) {
+      Alert.alert('Antwort fehlt', `Bitte beantworte zuerst: ${missing}`);
+      return;
+    }
+
+    setBusy('planning');
+
+    try {
+      const context = await buildContext();
+
+      const bundle = await fetchPlannerBundle({
+        goal: goalTitle.trim(),
+        difficultyLevel,
+        targetDate,
+        goals,
+        profile: context.mindsetProfile,
+        signals: context.signals,
+        freeSlots: context.freeSlots,
+        answers,
+        userPlanningProfile: context.planningProfile,
+      });
+
+      const category = ((questionMeta?.category as GoalCategory) ?? 'other');
+      const executionPlan = bundleToExecutionPlan(
+        bundle,
+        difficultyLevel,
+        category,
+        answers,
+        targetDate,
+      );
+      setPreviewPlan(executionPlan);
+      setMode('preview');
+    } catch (error: any) {
+      Alert.alert('Fehler', error?.message ?? 'Der Plan konnte nicht erstellt werden.');
+    } finally {
+      setBusy('idle');
+    }
+  }
+
+  async function handleSavePreviewPlan() {
+    if (!previewPlan) return;
+
+    const steps = previewPlan.steps ?? [];
+    const progressPercent = computeProgressPercent(steps);
+
+    const goal: PsycheGoal = {
+      id: uid('goal'),
+      title: goalTitle.trim(),
+      category: (questionMeta?.category as GoalCategory) ?? 'other',
+      difficultyLevel,
+      targetDate,
+      createdAt: new Date().toISOString(),
+      why: answerToString(answers.why || answers.reason || answers.motivation),
+      answers,
+      questionCount: questionSet.length,
+      refinement: {
+        goalLabel: goalTitle.trim(),
+        goalType: ((questionMeta?.category as GoalCategory) ?? 'other'),
+        questions: questionSet,
+      },
+      recommendation: {
+        summary:
+          previewPlan.summary ??
+          'Ein konkreter Plan mit Schritten, Gewohnheiten und Zeitblöcken wurde erstellt.',
+      },
+      miniSteps: mapChecklistToMiniSteps(steps),
+      executionPlan: previewPlan,
+      progressPercent,
+      appliedToApp: false,
+    };
+
+    const nextGoals = [goal, ...goals];
+    setGoals(nextGoals);
+    await savePsycheGoals(nextGoals);
+
+    setGoalTitle('');
+    setTargetDate(dayjs().add(90, 'day').format('YYYY-MM-DD'));
+    setDifficultyLevel(5);
+    resetBuilderState();
+
+    Alert.alert(
+      'Plan gespeichert',
+      'Dein Ziel wurde gespeichert und ist jetzt im Fortschritt-Tab sichtbar.',
+    );
+  }
+
+  async function handleApplyGoal(goal: PsycheGoal) {
+    if (!goal.executionPlan) return;
+
+    setBusy('applying');
+
+    try {
+      await applyFullGoalPlan({
+        todos: goal.executionPlan.todos ?? [],
+        habits: goal.executionPlan.habits ?? [],
+        calendarBlocks: goal.executionPlan.calendarBlocks ?? [],
+      });
+
+      const nextGoals = goals.map((item) =>
+        item.id === goal.id ? { ...item, appliedToApp: true } : item,
+      );
+      setGoals(nextGoals);
+      await savePsycheGoals(nextGoals);
+
+      Alert.alert('Übernommen', 'Todos, Habits und Kalenderblöcke wurden in deine App übernommen.');
+    } catch (error: any) {
+      Alert.alert('Fehler', error?.message ?? 'Der Plan konnte nicht in die App übernommen werden.');
+    } finally {
+      setBusy('idle');
+    }
+  }
+
+  async function handleApplyPreviewPlan() {
+    if (!previewPlan) return;
+
+    setBusy('applying');
+
+    try {
+      await applyFullGoalPlan({
+        todos: previewPlan.todos ?? [],
+        habits: previewPlan.habits ?? [],
+        calendarBlocks: previewPlan.calendarBlocks ?? [],
+      });
+      Alert.alert('Übernommen', 'Die Plan-Vorschläge wurden direkt in deine App übernommen.');
+    } catch (error: any) {
+      Alert.alert('Fehler', error?.message ?? 'Die Vorschläge konnten nicht übernommen werden.');
+    } finally {
+      setBusy('idle');
+    }
+  }
+
+  async function handleDeleteGoal(goalId: string) {
+    const nextGoals = goals.filter((goal) => goal.id !== goalId);
+    setGoals(nextGoals);
+    await savePsycheGoals(nextGoals);
+  }
+
+  if (loading) {
+    return (
+      <SafeAreaView style={styles.safe}>
+        <View style={styles.loadingWrap}>
+          <Text style={styles.loadingText}>Lade Psyche…</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  return (
     <SafeAreaView style={styles.safe}>
-      <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+      <ScrollView contentContainerStyle={styles.content}>
         <View style={styles.hero}>
-          <Text style={styles.heroTitle}>Psyche</Text>
-          <Text style={styles.heroSubtitle}>
-            Die KI soll den Plan übernehmen. Kein Meta-Gelaber, sondern konkrete Schritte.
+          <Text style={styles.kicker}>Psyche AI Planner</Text>
+          <Text style={styles.title}>Ziele zuerst sauber diagnostizieren.</Text>
+          <Text style={styles.subtitle}>
+            Schwierigkeit bestimmt die Tiefe der Analyse. Bei 1 gibt es wenige Fragen, bei 10 eine
+            fast vollständige Ziel-Zerlegung mit bis zu 40 Fragen und bis zu 50 Schritten.
           </Text>
+
+          <View style={styles.heroStats}>
+            <View style={styles.statPill}>
+              <Text style={styles.statValue}>{goals.length}</Text>
+              <Text style={styles.statLabel}>Ziele</Text>
+            </View>
+            <View style={styles.statPill}>
+              <Text style={styles.statValue}>{avgProgress}%</Text>
+              <Text style={styles.statLabel}>Ø Fortschritt</Text>
+            </View>
+            <View style={styles.statPill}>
+              <Text style={styles.statValue}>{targetQuestionCount}</Text>
+              <Text style={styles.statLabel}>Fragen</Text>
+            </View>
+          </View>
         </View>
 
-        {mode === 'start' ? (
-          <Section title="Neues Ziel">
+        {mode === 'setup' && (
+          <View style={styles.card}>
+            <Text style={styles.cardTitle}>Neues Ziel definieren</Text>
+
+            <Text style={styles.label}>Ziel</Text>
             <TextInput
-              value={goalText}
-              onChangeText={setGoalText}
-              placeholder="Zum Beispiel: In 12 Wochen 5 kg abnehmen"
+              value={goalTitle}
+              onChangeText={setGoalTitle}
+              placeholder="z. B. 12 kg Fett verlieren / Doktorarbeit in Biochemie fertigstellen / Unternehmen aufbauen"
               placeholderTextColor="rgba(255,255,255,0.35)"
+              style={[styles.input, { minHeight: 74 }]}
               multiline
-              textAlignVertical="top"
-              style={[styles.input, styles.goalInput]}
             />
 
-            <Pressable style={styles.primaryButton} onPress={startRefinement} disabled={loading}>
-              {phase === 'refine' ? (
-                <ActivityIndicator color="#13213F" />
-              ) : (
-                <Text style={styles.primaryButtonText}>KI-Fragen laden</Text>
-              )}
-            </Pressable>
-          </Section>
-        ) : null}
+            <Text style={styles.label}>Zieldatum</Text>
+            <TextInput
+              value={targetDate}
+              onChangeText={setTargetDate}
+              placeholder="YYYY-MM-DD"
+              placeholderTextColor="rgba(255,255,255,0.35)"
+              style={styles.input}
+            />
 
-        {mode === 'questions' ? (
-          <>
-            <Section title="KI-Einschätzung">
-              <Text style={styles.metaText}>
-                Kategorie: {refinement?.analysis?.category ?? refinement?.goalType ?? 'other'}
-              </Text>
-              <Text style={styles.metaText}>
-                Schwierigkeit: {refinement?.analysis?.difficulty ?? 'medium'}
-              </Text>
-              <Text style={styles.metaText}>
-                Komplexität: {refinement?.analysis?.complexity ?? 'moderate'}
-              </Text>
-              <Text style={styles.metaText}>
-                Rückfragen: {questions.length}
-              </Text>
-            </Section>
-
-            <Section title="Fragen">
-              {questions.map(renderQuestion)}
-
-              <View style={styles.actionRow}>
-                <Pressable style={styles.secondaryButton} onPress={resetAll}>
-                  <Text style={styles.secondaryButtonText}>Zurück</Text>
-                </Pressable>
-
-                <Pressable style={styles.primaryButton} onPress={generatePlan} disabled={loading}>
-                  {phase === 'plan' ? (
-                    <ActivityIndicator color="#13213F" />
-                  ) : (
-                    <Text style={styles.primaryButtonText}>Plan erzeugen</Text>
-                  )}
-                </Pressable>
-              </View>
-            </Section>
-          </>
-        ) : null}
-
-        {mode === 'plan' && planner ? (
-          <>
-            <Section title="Dein Plan">
-              <Text style={styles.planHeadline}>{goalText.trim()}</Text>
-              <Text style={styles.planSummary}>
-                {planner.planMeta?.summary ?? planner.primary.todo.reason}
-              </Text>
-            </Section>
-
-            <Section title="Was du konkret machen sollst">
-              <View style={styles.planItem}>
-                <Text style={styles.planItemLabel}>Todo</Text>
-                <Text style={styles.planItemTitle}>{planner.primary.todo.title}</Text>
-                <Text style={styles.planItemText}>{planner.primary.todo.reason}</Text>
-                {planner.primary.todo.instruction ? (
-                  <Text style={styles.planItemSub}>{planner.primary.todo.instruction}</Text>
-                ) : null}
-              </View>
-
-              <View style={styles.planItem}>
-                <Text style={styles.planItemLabel}>Habit</Text>
-                <Text style={styles.planItemTitle}>{planner.primary.habit.title}</Text>
-                <Text style={styles.planItemText}>{planner.primary.habit.reason}</Text>
-                {planner.primary.habit.instruction ? (
-                  <Text style={styles.planItemSub}>{planner.primary.habit.instruction}</Text>
-                ) : null}
-              </View>
-
-              <View style={styles.planItem}>
-                <Text style={styles.planItemLabel}>Kalender</Text>
-                <Text style={styles.planItemTitle}>{planner.primary.calendar.title}</Text>
-                <Text style={styles.planItemText}>
-                  {dayjs(planner.primary.calendar.start).format('DD.MM. HH:mm')} – {dayjs(planner.primary.calendar.end).format('HH:mm')}
+            <View style={styles.rowBetween}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.label}>Schwierigkeit {difficultyLevel}/10</Text>
+                <Text style={styles.smallMuted}>
+                  {difficultyLabel(difficultyLevel)} · ca. {questionCountForDifficulty(difficultyLevel)}{' '}
+                  Fragen · ca. {targetStepCount} Schritte
                 </Text>
-                <Text style={styles.planItemSub}>{planner.primary.calendar.reason}</Text>
               </View>
-            </Section>
+            </View>
 
-            {!!planner.primary.routines.length && (
-              <Section title="Wiederkehrende Struktur">
-                {planner.primary.routines.map((routine, index) => (
-                  <View key={`${routine.title}_${index}`} style={styles.routineCard}>
-                    <Text style={styles.routineTitle}>{routine.title}</Text>
-                    <Text style={styles.routineText}>{routine.reason}</Text>
-                    <Text style={styles.routineMeta}>
-                      {routine.frequencyPerWeek}x pro Woche • {routine.durationMinutes ?? 20} Min
+            <View style={styles.difficultyRow}>
+              {Array.from({ length: 10 }).map((_, index) => {
+                const level = index + 1;
+                const active = difficultyLevel === level;
+                return (
+                  <Pressable
+                    key={level}
+                    onPress={() => setDifficultyLevel(level)}
+                    style={[styles.diffButton, active && styles.diffButtonActive]}
+                  >
+                    <Text style={[styles.diffButtonText, active && styles.diffButtonTextActive]}>
+                      {level}
                     </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+
+            <Pressable
+              onPress={handleGenerateQuestions}
+              disabled={busy !== 'idle'}
+              style={[styles.primaryBtn, busy !== 'idle' && styles.btnDisabled]}
+            >
+              <Text style={styles.primaryBtnText}>
+                {busy === 'refining' ? 'KI denkt nach…' : 'Passende KI-Fragen erzeugen'}
+              </Text>
+            </Pressable>
+          </View>
+        )}
+
+        {mode === 'questions' && !!currentQuestion && (
+          <View style={styles.card}>
+            <View style={styles.rowBetween}>
+              <Text style={styles.cardTitle}>Diagnose-Flow</Text>
+              <Text style={styles.stepCounter}>
+                {questionIndex + 1}/{questionSet.length}
+              </Text>
+            </View>
+
+            <Text style={styles.smallMuted}>
+              {questionMeta?.summary ??
+                `${questionSet.length} Fragen für ein realistisches, umsetzbares Zielsystem.`}
+            </Text>
+
+            <View style={styles.progressMetaWrap}>
+              <Text style={styles.progressMetaText}>
+                Beantwortet: {answeredCount}/{questionSet.length}
+              </Text>
+              <GoalProgressBar value={Math.round((answeredCount / Math.max(questionSet.length, 1)) * 100)} />
+            </View>
+
+            <View style={styles.questionCard}>
+              <Text style={styles.questionIndex}>Frage {questionIndex + 1}</Text>
+              <Text style={styles.questionTitle}>{currentQuestion.title}</Text>
+              {!!currentQuestion.whyAsked && (
+                <Text style={styles.questionWhy}>{currentQuestion.whyAsked}</Text>
+              )}
+
+              <QuestionInput
+                question={currentQuestion}
+                value={answers[currentQuestion.id]}
+                onChange={(next) => setAnswers((prev) => ({ ...prev, [currentQuestion.id]: next }))}
+                onToggle={(optionId) =>
+                  setAnswers((prev) => toggleMultiChoice(prev, currentQuestion.id, optionId))
+                }
+              />
+            </View>
+
+            <View style={styles.questionActions}>
+              <Pressable
+                onPress={goPrevQuestion}
+                disabled={questionIndex === 0}
+                style={[styles.secondaryBtn, questionIndex === 0 && styles.btnDisabled]}
+              >
+                <Text style={styles.secondaryBtnText}>Zurück</Text>
+              </Pressable>
+
+              {questionIndex < questionSet.length - 1 ? (
+                <Pressable onPress={goNextQuestion} style={styles.primaryHalfBtn}>
+                  <Text style={styles.primaryBtnText}>Weiter</Text>
+                </Pressable>
+              ) : (
+                <Pressable
+                  onPress={handleBuildPlan}
+                  disabled={busy !== 'idle'}
+                  style={[styles.primaryHalfBtn, busy !== 'idle' && styles.btnDisabled]}
+                >
+                  <Text style={styles.primaryBtnText}>
+                    {busy === 'planning' ? 'Plan wird gebaut…' : 'Plan erzeugen'}
+                  </Text>
+                </Pressable>
+              )}
+            </View>
+
+            <Pressable onPress={handleBuildPlan} style={styles.ghostBtn}>
+              <Text style={styles.ghostBtnText}>Alle Antworten prüfen und direkt Plan bauen</Text>
+            </Pressable>
+          </View>
+        )}
+
+        {mode === 'preview' && !!previewPlan && (
+          <View style={styles.card}>
+            <Text style={styles.cardTitle}>Plan-Vorschau</Text>
+            <Text style={styles.smallMuted}>
+              Erst prüfen, dann speichern oder direkt in die App übernehmen.
+            </Text>
+
+            <View style={styles.previewBlock}>
+              <Text style={styles.previewLabel}>Zusammenfassung</Text>
+              <Text style={styles.previewText}>
+                {previewPlan.summary ?? 'Keine Zusammenfassung vorhanden.'}
+              </Text>
+            </View>
+
+            <View style={styles.previewGrid}>
+              <View style={styles.previewMiniCard}>
+                <Text style={styles.previewMiniValue}>{previewPlan.todos?.length ?? 0}</Text>
+                <Text style={styles.previewMiniLabel}>Todos</Text>
+              </View>
+              <View style={styles.previewMiniCard}>
+                <Text style={styles.previewMiniValue}>{previewPlan.habits?.length ?? 0}</Text>
+                <Text style={styles.previewMiniLabel}>Habits</Text>
+              </View>
+              <View style={styles.previewMiniCard}>
+                <Text style={styles.previewMiniValue}>{previewPlan.calendarBlocks?.length ?? 0}</Text>
+                <Text style={styles.previewMiniLabel}>Kalender</Text>
+              </View>
+              <View style={styles.previewMiniCard}>
+                <Text style={styles.previewMiniValue}>{previewPlan.steps?.length ?? 0}</Text>
+                <Text style={styles.previewMiniLabel}>Schritte</Text>
+              </View>
+            </View>
+
+            {!!previewPlan.todos?.length && (
+              <View style={styles.previewBlock}>
+                <Text style={styles.previewLabel}>Haupt-Todos</Text>
+                {previewPlan.todos.slice(0, 5).map((todo, index) => (
+                  <View key={`${todo.title}_${index}`} style={styles.previewListItem}>
+                    <Text style={styles.previewListTitle}>{todo.title}</Text>
+                    <Text style={styles.previewListText}>{todo.reason}</Text>
                   </View>
                 ))}
-              </Section>
+              </View>
             )}
 
-            <Section title="Step-by-Step-Weg">
-              <StepList steps={executionSteps} />
-            </Section>
+            {!!previewPlan.habits?.length && (
+              <View style={styles.previewBlock}>
+                <Text style={styles.previewLabel}>Habits</Text>
+                {previewPlan.habits.slice(0, 5).map((habit, index) => (
+                  <View key={`${habit.title}_${index}`} style={styles.previewListItem}>
+                    <Text style={styles.previewListTitle}>{habit.title}</Text>
+                    <Text style={styles.previewListText}>{habit.reason}</Text>
+                  </View>
+                ))}
+              </View>
+            )}
 
-            <Section title="Übernehmen">
-              <Text style={styles.takeoverText}>
-                Hier übernimmt die App wieder den Plan für dich in Todos, Habits und Kalender.
-              </Text>
+            {!!previewPlan.calendarBlocks?.length && (
+              <View style={styles.previewBlock}>
+                <Text style={styles.previewLabel}>Kalenderblöcke</Text>
+                {previewPlan.calendarBlocks.slice(0, 5).map((block, index) => (
+                  <View key={`${block.title}_${index}`} style={styles.previewListItem}>
+                    <Text style={styles.previewListTitle}>
+                      {block.title} {block.startTime ? `· ${block.startTime}` : ''}
+                    </Text>
+                    <Text style={styles.previewListText}>{block.reason}</Text>
+                  </View>
+                ))}
+              </View>
+            )}
 
-              <Pressable style={styles.primaryButton} onPress={applyAll} disabled={loading}>
-                {phase === 'apply' ? (
-                  <ActivityIndicator color="#13213F" />
-                ) : (
-                  <Text style={styles.primaryButtonText}>Alles übernehmen</Text>
-                )}
+            {!!previewPlan.steps?.length && (
+              <View style={styles.previewBlock}>
+                <Text style={styles.previewLabel}>Erste Schritte</Text>
+                {previewPlan.steps.slice(0, 5).map((step, index) => (
+                  <View key={step.id} style={styles.previewStepRow}>
+                    <Text style={styles.previewStepNumber}>
+                      {String(index + 1).padStart(2, '0')}
+                    </Text>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.previewListTitle}>{step.title}</Text>
+                      <Text style={styles.previewListText}>{step.explanation}</Text>
+                    </View>
+                  </View>
+                ))}
+              </View>
+            )}
+
+            <View style={styles.previewActionsStack}>
+              <Pressable onPress={handleSavePreviewPlan} style={styles.primaryBtn}>
+                <Text style={styles.primaryBtnText}>Plan speichern</Text>
               </Pressable>
 
-              <Pressable style={styles.secondaryButton} onPress={resetAll}>
-                <Text style={styles.secondaryButtonText}>Neues Ziel</Text>
+              <Pressable
+                onPress={handleApplyPreviewPlan}
+                disabled={busy !== 'idle'}
+                style={[styles.secondaryWideBtn, busy !== 'idle' && styles.btnDisabled]}
+              >
+                <Text style={styles.secondaryBtnText}>
+                  {busy === 'applying' ? 'Wird übernommen…' : 'Direkt in die App übernehmen'}
+                </Text>
               </Pressable>
-            </Section>
-          </>
-        ) : null}
+
+              <Pressable onPress={() => setMode('questions')} style={styles.ghostBtn}>
+                <Text style={styles.ghostBtnText}>Antworten nochmal bearbeiten</Text>
+              </Pressable>
+            </View>
+          </View>
+        )}
+
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>Deine Ziele</Text>
+
+          {!goals.length ? (
+            <Text style={styles.emptyText}>
+              Noch kein Ziel gespeichert. Erstelle oben dein erstes KI-Ziel.
+            </Text>
+          ) : (
+            goals.map((goal) => (
+              <View key={goal.id} style={styles.goalCard}>
+                <View style={styles.rowBetween}>
+                  <View style={{ flex: 1, paddingRight: 10 }}>
+                    <Text style={styles.goalTitle}>{goal.title}</Text>
+                    <Text style={styles.goalMeta}>
+                      {goal.category} · Schwierigkeit {goal.difficultyLevel}/10 · {goal.questionCount ?? 0} Fragen
+                    </Text>
+                  </View>
+                  <Text style={styles.goalPercent}>{goal.progressPercent}%</Text>
+                </View>
+
+                <GoalProgressBar value={goal.progressPercent} />
+
+                <Text style={styles.goalSummary}>
+                  {goal.recommendation?.summary ?? 'Noch keine Zusammenfassung vorhanden.'}
+                </Text>
+
+                <View style={styles.goalActions}>
+                  <Pressable
+                    onPress={() => handleApplyGoal(goal)}
+                    disabled={busy !== 'idle'}
+                    style={[styles.secondaryBtn, busy !== 'idle' && styles.btnDisabled]}
+                  >
+                    <Text style={styles.secondaryBtnText}>
+                      {goal.appliedToApp ? 'Schon übernommen' : 'In App übernehmen'}
+                    </Text>
+                  </Pressable>
+
+                  <Pressable
+                    onPress={() =>
+                      Alert.alert('Ziel löschen', 'Dieses Ziel wirklich löschen?', [
+                        { text: 'Abbrechen', style: 'cancel' },
+                        {
+                          text: 'Löschen',
+                          style: 'destructive',
+                          onPress: () => {
+                            handleDeleteGoal(goal.id);
+                          },
+                        },
+                      ])
+                    }
+                    style={styles.deleteBtn}
+                  >
+                    <Text style={styles.deleteBtnText}>Löschen</Text>
+                  </Pressable>
+                </View>
+              </View>
+            ))
+          )}
+        </View>
       </ScrollView>
     </SafeAreaView>
   );
@@ -537,284 +1697,404 @@ export default function PsycheScreen() {
 const styles = StyleSheet.create({
   safe: {
     flex: 1,
-    backgroundColor: BG,
+    backgroundColor: PSYCHE_THEME.bg,
+  },
+  loadingWrap: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  loadingText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '800',
   },
   content: {
-    paddingTop: 20,
-    paddingHorizontal: 18,
+    padding: 18,
     paddingBottom: 120,
     gap: 16,
   },
   hero: {
-    backgroundColor: BG_DARK,
+    backgroundColor: '#102754',
     borderRadius: 24,
     padding: 18,
     borderWidth: 1,
-    borderColor: BORDER,
+    borderColor: 'rgba(255,255,255,0.08)',
   },
-  heroTitle: {
-    color: TEXT,
-    fontSize: 30,
+  kicker: {
+    color: GOLD,
+    fontSize: 12,
+    fontWeight: '900',
+    letterSpacing: 1.2,
+    textTransform: 'uppercase',
+  },
+  title: {
+    color: '#fff',
+    fontSize: 28,
+    fontWeight: '900',
+    marginTop: 8,
+  },
+  subtitle: {
+    color: 'rgba(255,255,255,0.75)',
+    fontSize: 14,
+    lineHeight: 22,
+    marginTop: 10,
+  },
+  heroStats: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 16,
+  },
+  statPill: {
+    flex: 1,
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    borderRadius: 16,
+    paddingVertical: 12,
+    alignItems: 'center',
+  },
+  statValue: {
+    color: '#fff',
+    fontSize: 20,
     fontWeight: '900',
   },
-  heroSubtitle: {
-    color: MUTED,
+  statLabel: {
+    color: 'rgba(255,255,255,0.68)',
+    fontSize: 12,
+    fontWeight: '800',
+    marginTop: 4,
+  },
+  card: {
+    backgroundColor: '#132C5F',
+    borderRadius: 24,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
+  },
+  cardTitle: {
+    color: '#fff',
+    fontSize: 18,
+    fontWeight: '900',
+  },
+  label: {
+    color: GOLD,
+    fontSize: 12,
+    fontWeight: '900',
+    marginTop: 14,
+    marginBottom: 8,
+    letterSpacing: 1,
+    textTransform: 'uppercase',
+  },
+  input: {
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    color: '#fff',
     fontSize: 15,
+    lineHeight: 22,
+  },
+  rowBetween: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  smallMuted: {
+    color: 'rgba(255,255,255,0.62)',
+    fontSize: 13,
+    lineHeight: 19,
+    marginTop: 4,
+  },
+  difficultyRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginTop: 12,
+  },
+  diffButton: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
+  },
+  diffButtonActive: {
+    backgroundColor: GOLD,
+    borderColor: GOLD,
+  },
+  diffButtonText: {
+    color: '#fff',
+    fontWeight: '900',
+    fontSize: 15,
+  },
+  diffButtonTextActive: {
+    color: '#1A1A1A',
+  },
+  primaryBtn: {
+    marginTop: 16,
+    borderRadius: 16,
+    backgroundColor: GOLD,
+    paddingVertical: 14,
+    alignItems: 'center',
+  },
+  primaryHalfBtn: {
+    flex: 1,
+    borderRadius: 16,
+    backgroundColor: GOLD,
+    paddingVertical: 14,
+    alignItems: 'center',
+  },
+  primaryBtnText: {
+    color: '#1A1A1A',
+    fontWeight: '900',
+    fontSize: 15,
+  },
+  secondaryBtn: {
+    flex: 1,
+    borderRadius: 14,
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    paddingVertical: 12,
+    alignItems: 'center',
+  },
+  secondaryWideBtn: {
+    marginTop: 10,
+    borderRadius: 14,
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    paddingVertical: 12,
+    alignItems: 'center',
+  },
+  secondaryBtnText: {
+    color: '#fff',
+    fontWeight: '800',
+    fontSize: 14,
+  },
+  deleteBtn: {
+    borderRadius: 14,
+    backgroundColor: 'rgba(255,90,90,0.14)',
+    paddingHorizontal: 16,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  deleteBtnText: {
+    color: '#ffabab',
+    fontWeight: '800',
+    fontSize: 14,
+  },
+  ghostBtn: {
+    marginTop: 12,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.12)',
+    paddingVertical: 12,
+    alignItems: 'center',
+  },
+  ghostBtnText: {
+    color: 'rgba(255,255,255,0.78)',
+    fontWeight: '800',
+    fontSize: 13,
+  },
+  btnDisabled: {
+    opacity: 0.55,
+  },
+  stepCounter: {
+    color: GOLD,
+    fontSize: 14,
+    fontWeight: '900',
+  },
+  progressMetaWrap: {
+    marginTop: 14,
+  },
+  progressMetaText: {
+    color: 'rgba(255,255,255,0.72)',
+    fontSize: 12,
+    fontWeight: '800',
+    marginBottom: 8,
+  },
+  questionCard: {
+    marginTop: 14,
+    borderRadius: 18,
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    padding: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.07)',
+  },
+  questionIndex: {
+    color: GOLD,
+    fontSize: 12,
+    fontWeight: '900',
+  },
+  questionTitle: {
+    color: '#fff',
+    fontSize: 18,
+    fontWeight: '800',
+    marginTop: 8,
+    lineHeight: 24,
+  },
+  questionWhy: {
+    color: 'rgba(255,255,255,0.62)',
+    fontSize: 13,
+    lineHeight: 19,
+    marginTop: 6,
+  },
+  questionActions: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 14,
+  },
+  optionsWrap: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginTop: 12,
+  },
+  optionChip: {
+    borderRadius: 999,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
+  },
+  optionChipActive: {
+    backgroundColor: 'rgba(212,175,55,0.16)',
+    borderColor: 'rgba(212,175,55,0.35)',
+  },
+  optionText: {
+    color: '#fff',
+    fontWeight: '700',
+  },
+  optionTextActive: {
+    color: GOLD,
+  },
+  previewBlock: {
+    marginTop: 14,
+    borderRadius: 18,
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    padding: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.07)',
+  },
+  previewLabel: {
+    color: GOLD,
+    fontSize: 12,
+    fontWeight: '900',
+    textTransform: 'uppercase',
+    letterSpacing: 1,
+  },
+  previewText: {
+    color: '#fff',
+    fontSize: 14,
     lineHeight: 22,
     marginTop: 8,
   },
-  sectionCard: {
-    backgroundColor: CARD,
-    borderRadius: 22,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: BORDER,
+  previewGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+    marginTop: 14,
   },
-  sectionTitle: {
+  previewMiniCard: {
+    width: '47%',
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    borderRadius: 18,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.07)',
+  },
+  previewMiniValue: {
+    color: '#fff',
+    fontSize: 20,
+    fontWeight: '900',
+  },
+  previewMiniLabel: {
+    color: 'rgba(255,255,255,0.68)',
+    fontSize: 12,
+    fontWeight: '800',
+    marginTop: 4,
+  },
+  previewListItem: {
+    marginTop: 10,
+  },
+  previewListTitle: {
+    color: '#fff',
+    fontSize: 15,
+    fontWeight: '800',
+  },
+  previewListText: {
+    color: 'rgba(255,255,255,0.70)',
+    fontSize: 13,
+    lineHeight: 20,
+    marginTop: 4,
+  },
+  previewStepRow: {
+    flexDirection: 'row',
+    gap: 12,
+    marginTop: 10,
+  },
+  previewStepNumber: {
+    width: 28,
+    color: GOLD,
+    fontSize: 12,
+    fontWeight: '900',
+    marginTop: 2,
+  },
+  previewActionsStack: {
+    marginTop: 8,
+  },
+  emptyText: {
+    color: 'rgba(255,255,255,0.72)',
+    fontSize: 14,
+    lineHeight: 22,
+    marginTop: 12,
+  },
+  goalCard: {
+    marginTop: 14,
+    borderRadius: 18,
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    padding: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.07)',
+  },
+  goalTitle: {
+    color: '#fff',
+    fontSize: 17,
+    fontWeight: '900',
+  },
+  goalMeta: {
+    color: 'rgba(255,255,255,0.65)',
+    fontSize: 12,
+    marginTop: 4,
+  },
+  goalPercent: {
     color: GOLD,
     fontSize: 18,
     fontWeight: '900',
   },
-  input: {
-    marginTop: 14,
-    backgroundColor: CARD_DARK,
-    color: TEXT,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: BORDER,
-    paddingHorizontal: 14,
-    paddingVertical: 14,
-    fontSize: 15,
-  },
-  textarea: {
-    minHeight: 110,
-  },
-  goalInput: {
-    minHeight: 120,
-  },
-  primaryButton: {
-    marginTop: 14,
-    minHeight: 52,
-    borderRadius: 16,
-    backgroundColor: GOLD,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 14,
-  },
-  primaryButtonText: {
-    color: '#13213F',
-    fontSize: 15,
-    fontWeight: '900',
-  },
-  secondaryButton: {
-    marginTop: 12,
-    minHeight: 52,
-    borderRadius: 16,
-    backgroundColor: 'rgba(255,255,255,0.08)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 14,
-  },
-  secondaryButtonText: {
-    color: TEXT,
-    fontSize: 15,
-    fontWeight: '900',
-  },
-  metaText: {
-    color: TEXT,
-    fontSize: 14,
-    lineHeight: 22,
-    marginTop: 8,
-  },
-  questionCard: {
-    marginTop: 14,
-    backgroundColor: CARD_DARK,
-    borderRadius: 18,
-    padding: 14,
-    borderWidth: 1,
-    borderColor: BORDER,
-  },
-  questionRow: {
-    flexDirection: 'row',
-    gap: 10,
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-  },
-  questionTitle: {
-    color: TEXT,
-    fontSize: 16,
-    fontWeight: '900',
-    flex: 1,
-    lineHeight: 23,
-  },
-  required: {
-    color: GOLD,
-    fontSize: 11,
-    fontWeight: '900',
-    textTransform: 'uppercase',
-  },
-  questionWhy: {
-    color: MUTED,
-    fontSize: 13,
-    lineHeight: 19,
-    marginTop: 8,
-  },
-  optionWrap: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-    marginTop: 14,
-  },
-  option: {
-    paddingHorizontal: 12,
-    paddingVertical: 10,
+  progressTrack: {
+    height: 10,
     borderRadius: 999,
-    backgroundColor: 'rgba(255,255,255,0.08)',
-    borderWidth: 1,
-    borderColor: BORDER,
-  },
-  optionSelected: {
-    backgroundColor: 'rgba(212,175,55,0.18)',
-    borderColor: 'rgba(212,175,55,0.34)',
-  },
-  optionText: {
-    color: TEXT,
-    fontWeight: '800',
-    fontSize: 13,
-  },
-  optionTextSelected: {
-    color: GOLD,
-  },
-  actionRow: {
-    marginTop: 10,
-  },
-  planHeadline: {
-    color: TEXT,
-    fontSize: 24,
-    fontWeight: '900',
-    marginTop: 10,
-  },
-  planSummary: {
-    color: MUTED,
-    fontSize: 15,
-    lineHeight: 23,
-    marginTop: 10,
-  },
-  planItem: {
-    marginTop: 14,
-    backgroundColor: CARD_DARK,
-    borderRadius: 18,
-    padding: 14,
-    borderWidth: 1,
-    borderColor: BORDER,
-  },
-  planItemLabel: {
-    color: GOLD,
-    fontSize: 12,
-    fontWeight: '900',
-    textTransform: 'uppercase',
-  },
-  planItemTitle: {
-    color: TEXT,
-    fontSize: 17,
-    fontWeight: '900',
-    marginTop: 6,
-  },
-  planItemText: {
-    color: TEXT,
-    fontSize: 14,
-    lineHeight: 22,
-    marginTop: 8,
-  },
-  planItemSub: {
-    color: MUTED,
-    fontSize: 13,
-    lineHeight: 20,
-    marginTop: 8,
-  },
-  routineCard: {
+    backgroundColor: 'rgba(255,255,255,0.10)',
+    overflow: 'hidden',
     marginTop: 12,
-    backgroundColor: CARD_DARK,
-    borderRadius: 16,
-    padding: 14,
-    borderWidth: 1,
-    borderColor: BORDER,
   },
-  routineTitle: {
-    color: TEXT,
-    fontSize: 16,
-    fontWeight: '900',
+  progressFill: {
+    height: '100%',
+    borderRadius: 999,
+    backgroundColor: '#76D88E',
   },
-  routineText: {
-    color: MUTED,
+  goalSummary: {
+    color: 'rgba(255,255,255,0.82)',
     fontSize: 14,
     lineHeight: 21,
-    marginTop: 6,
+    marginTop: 12,
   },
-  routineMeta: {
-    color: GOLD,
-    fontSize: 12,
-    fontWeight: '800',
-    marginTop: 8,
-  },
-  stepCard: {
-    backgroundColor: CARD_DARK,
-    borderRadius: 18,
-    padding: 14,
-    borderWidth: 1,
-    borderColor: BORDER,
-  },
-  stepHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-  },
-  stepNumber: {
-    width: 30,
-    height: 30,
-    borderRadius: 999,
-    backgroundColor: GOLD,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  stepNumberText: {
-    color: '#13213F',
-    fontWeight: '900',
-    fontSize: 13,
-  },
-  stepTitle: {
-    color: TEXT,
-    fontSize: 16,
-    fontWeight: '900',
-    flex: 1,
-  },
-  stepText: {
-    color: TEXT,
-    fontSize: 14,
-    lineHeight: 22,
-    marginTop: 10,
-  },
-  stepChecklistItem: {
+  goalActions: {
     flexDirection: 'row',
     gap: 10,
-    alignItems: 'center',
-  },
-  stepDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 999,
-    backgroundColor: GOLD,
-  },
-  stepChecklistText: {
-    color: MUTED,
-    fontSize: 13,
-    lineHeight: 19,
-    flex: 1,
-  },
-  takeoverText: {
-    color: MUTED,
-    fontSize: 14,
-    lineHeight: 22,
-    marginTop: 10,
+    marginTop: 14,
   },
 });

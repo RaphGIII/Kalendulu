@@ -12,6 +12,9 @@ const API_URL = process.env.EXPO_PUBLIC_PLANNER_API_URL;
 const APP_SECRET = process.env.EXPO_PUBLIC_APP_SHARED_SECRET;
 
 type PlannerApiRequest = {
+  goal: string;
+  difficultyLevel: number;
+  targetDate?: string;
   goals: PsycheGoal[];
   profile: MindsetProfile;
   signals: PsycheSignals;
@@ -36,7 +39,7 @@ function isPlannerBundle(value: any): value is PlannerBundle {
     typeof value.primary.calendar.end === 'string' &&
     typeof value.primary.calendar.reason === 'string' &&
     Array.isArray(value.primary.routines) &&
-    Array.isArray(value.alternatives)
+    Array.isArray(value.executionSteps)
   );
 }
 

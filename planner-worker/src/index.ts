@@ -1,11 +1,16 @@
+import {
+  generateMasterBlueprint,
+  type Domain,
+  type GoalStateSignal,
+  type MasterBlueprintOutput,
+} from './coachEngine';
+
 export interface Env {
   GROQ_API_KEY: string;
   APP_SHARED_SECRET?: string;
   GROQ_MODEL_REFINE?: string;
   GROQ_MODEL_PLAN?: string;
 }
-
-type PlanDepth = 'compact' | 'balanced' | 'deep' | 'full_system';
 
 type GoalQuestion = {
   id: string;
@@ -22,15 +27,26 @@ type GoalQuestion = {
 
 type GoalRefinementResponse = {
   goalLabel: string;
-  goalType: string;
+  goalType:
+    | 'fitness'
+    | 'study'
+    | 'language'
+    | 'career'
+    | 'business'
+    | 'mindset'
+    | 'research'
+    | 'writing'
+    | 'project'
+    | 'other';
   questions: GoalQuestion[];
   analysis?: {
     category?: string;
-    complexity?: string;
-    difficulty?: string;
+    complexity?: 'simple' | 'moderate' | 'advanced' | 'high_complexity';
+    difficulty?: 'very_easy' | 'easy' | 'medium' | 'hard' | 'very_hard';
     rationale?: string[];
     missingInformation?: string[];
     recommendedQuestionCount?: number;
+    targetQuestionCount?: number;
   };
 };
 
@@ -89,24 +105,55 @@ type PlannerBundle = {
     habit: PlannerReasonedText;
     calendar: PlannerCalendarBlock;
     routines: PlannerRoutine[];
-    scheduleAdjustment?: PlannerReasonedText;
-    review?: {
-      reviewAfterDays: number;
-      questions: string[];
-    };
   };
-  alternatives: Array<{
+  alternatives?: Array<{
     label: string;
     todo: PlannerReasonedText;
     habit: PlannerReasonedText;
     calendar: PlannerCalendarBlock;
   }>;
-  executionSteps?: PlannerExecutionStep[];
+  executionSteps: PlannerExecutionStep[];
+  systemMap?: {
+    rootProblem: string;
+    problemNodes: Array<{
+      id: string;
+      label: string;
+      kind: string;
+      severity: number;
+      explanation: string;
+    }>;
+    dependencyEdges: Array<{
+      from: string;
+      to: string;
+      relation: string;
+      weight: number;
+    }>;
+    patternInsights: Array<{
+      label: string;
+      explanation: string;
+      repetitionLikelihood: 'low' | 'medium' | 'high';
+      coachingValue: 'low' | 'medium' | 'high';
+    }>;
+    leverageInsights: Array<{
+      label: string;
+      explanation: string;
+      expectedImpact: 'low' | 'medium' | 'high';
+      whyHighLeverage: string;
+    }>;
+    failureScenarios: Array<{
+      label: string;
+      trigger: string;
+      consequence: string;
+      prevention: string;
+    }>;
+  };
   planMeta?: {
-    depth?: PlanDepth;
-    difficulty?: string;
-    complexity?: string;
+    depth?: 'compact' | 'balanced' | 'deep' | 'full_system';
+    difficulty?: 'very_easy' | 'easy' | 'medium' | 'hard' | 'very_hard';
+    complexity?: 'simple' | 'moderate' | 'advanced' | 'high_complexity';
     summary?: string;
+    targetStepCount?: number;
+    coachStyle?: string;
   };
 };
 
@@ -139,11 +186,7 @@ function ensureArray<T>(value: unknown): T[] {
 }
 
 function stripCodeFences(text: string): string {
-  return text
-    .replace(/^```json\s*/i, '')
-    .replace(/^```\s*/i, '')
-    .replace(/```$/i, '')
-    .trim();
+  return text.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/```$/i, '').trim();
 }
 
 function extractFirstJsonObject(text: string): string | null {
@@ -185,105 +228,187 @@ function extractFirstJsonObject(text: string): string | null {
   return null;
 }
 
-function tryParseJson<T>(rawText: string): T | null {
-  try {
-    return JSON.parse(rawText) as T;
-  } catch {
-    return null;
-  }
-}
-
 function parseModelJsonLoose<T>(rawText: string): T | null {
-  const direct = tryParseJson<T>(stripCodeFences(rawText));
-  if (direct) return direct;
-
-  const extracted = extractFirstJsonObject(rawText);
-  if (!extracted) return null;
-
-  return tryParseJson<T>(extracted);
+  try {
+    return JSON.parse(stripCodeFences(rawText)) as T;
+  } catch {
+    const extracted = extractFirstJsonObject(rawText);
+    if (!extracted) return null;
+    try {
+      return JSON.parse(extracted) as T;
+    } catch {
+      return null;
+    }
+  }
 }
 
-async function callGroqRaw({
-  env,
-  model,
-  system,
-  user,
-  temperature = 0.2,
-  maxCompletionTokens = 2200,
-  forceJson = false,
-}: {
-  env: Env;
-  model: string;
-  system: string;
-  user: string;
-  temperature?: number;
-  maxCompletionTokens?: number;
-  forceJson?: boolean;
-}): Promise<string> {
-  const body: Record<string, unknown> = {
-    model,
-    temperature,
-    max_completion_tokens: maxCompletionTokens,
-    messages: [
-      { role: 'system', content: system },
-      { role: 'user', content: user },
-    ],
-  };
-
-  if (forceJson) {
-    body.response_format = { type: 'json_object' };
-  }
-
-  const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${env.GROQ_API_KEY}`,
-    },
-    body: JSON.stringify(body),
-  });
-
-  const raw = await res.text();
-
-  if (!res.ok) {
-    throw new Error(`Groq error ${res.status}: ${raw}`);
-  }
-
-  const parsed = JSON.parse(raw) as {
-    choices?: Array<{ message?: { content?: string } }>;
-  };
-
-  const content = parsed.choices?.[0]?.message?.content;
-  if (!content) {
-    throw new Error('Groq returned empty content.');
-  }
-
-  return content;
+function clamp(value: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, value));
 }
 
-function refinementSystemPrompt() {
+function curvedCount(level: number, min: number, max: number) {
+  const safe = clamp(level, 1, 10);
+  const t = (safe - 1) / 9;
+  const curved = (Math.exp(2.4 * t) - 1) / (Math.exp(2.4) - 1);
+  return Math.round(min + curved * (max - min));
+}
+
+function questionCountForDifficulty(level: number) {
+  return curvedCount(level, 5, 40);
+}
+
+function stepCountForDifficulty(level: number) {
+  return curvedCount(level, 10, 50);
+}
+
+function inferGoalType(goal: string): GoalRefinementResponse['goalType'] {
+  const g = goal.toLowerCase();
+
+  if (
+    g.includes('abnehm') ||
+    g.includes('fett') ||
+    g.includes('muskel') ||
+    g.includes('fitness') ||
+    g.includes('lauf') ||
+    g.includes('gesund') ||
+    g.includes('zunehmen')
+  ) {
+    return 'fitness';
+  }
+
+  if (g.includes('doktor') || g.includes('master') || g.includes('stud') || g.includes('prüfung')) {
+    return 'study';
+  }
+
+  if (g.includes('paper') || g.includes('forschung') || g.includes('dissertation')) {
+    return 'research';
+  }
+
+  if (g.includes('buch') || g.includes('schreib') || g.includes('roman')) {
+    return 'writing';
+  }
+
+  if (g.includes('unternehmen') || g.includes('startup') || g.includes('firma')) {
+    return 'business';
+  }
+
+  if (g.includes('karriere') || g.includes('bewerb') || g.includes('job')) {
+    return 'career';
+  }
+
+  if (g.includes('sprache') || g.includes('englisch') || g.includes('deutsch')) {
+    return 'language';
+  }
+
+  if (g.includes('projekt') || g.includes('app') || g.includes('produkt')) {
+    return 'project';
+  }
+
+  return 'other';
+}
+
+function inferDomain(goal: string): Domain {
+  const g = goal.toLowerCase();
+
+  if (g.includes('schach') || g.includes('elo')) return 'chess';
+  if (
+    g.includes('mondscheinsonate') ||
+    g.includes('klavier') ||
+    g.includes('gitarre') ||
+    g.includes('beethoven') ||
+    g.includes('musik')
+  ) {
+    return 'music';
+  }
+  if (
+    g.includes('abnehm') ||
+    g.includes('fett') ||
+    g.includes('muskel') ||
+    g.includes('fitness') ||
+    g.includes('lauf') ||
+    g.includes('zunehmen')
+  ) {
+    return 'fitness';
+  }
+  if (
+    g.includes('doktor') ||
+    g.includes('master') ||
+    g.includes('stud') ||
+    g.includes('prüfung') ||
+    g.includes('lernen')
+  ) {
+    return 'study';
+  }
+  if (
+    g.includes('unternehmen') ||
+    g.includes('startup') ||
+    g.includes('firma') ||
+    g.includes('business')
+  ) {
+    return 'business';
+  }
+  if (g.includes('schreib') || g.includes('roman') || g.includes('buch')) {
+    return 'writing';
+  }
+  if (g.includes('projekt') || g.includes('app') || g.includes('produkt')) {
+    return 'project';
+  }
+  return 'other';
+}
+
+function buildDomainRequirements(goalType: GoalRefinementResponse['goalType']) {
+  switch (goalType) {
+    case 'fitness':
+      return [
+        'Pflicht bei Körperzielen: aktueller Stand, Zielstand, verfügbare Zeit, Trainingshistorie, gesundheitliche Grenzen, Engpässe.',
+        'Wenn das Ziel Abnehmen oder Zunehmen ist, müssen später konkrete Kalorien-, Protein-, Trainings- und Kontrollparameter ableitbar sein.',
+      ];
+    case 'research':
+      return [
+        'Pflicht bei Forschung/Promotion: Fachgebiet, Status quo, Thema, institutionelle Vorgaben, Deadline, Daten/Literatur, Betreuerstatus, Wochenstunden, Kapitelstatus.',
+      ];
+    case 'business':
+      return [
+        'Pflicht bei Unternehmensaufbau: Branche, Angebot, Startstatus, Budget, verfügbare Stunden, Vertriebsweg, Zielgruppe, monetäres Ziel.',
+      ];
+    case 'writing':
+      return [
+        'Pflicht bei Schreibzielen: Format, Umfang, Deadline, vorhandenes Material, Schreibstatus, verfügbare Schreibblöcke, Qualitätsanspruch.',
+      ];
+    case 'study':
+      return [
+        'Pflicht bei Lern-/Schach-/Leistungszielen: aktueller Stand, Zielniveau, Wochenstunden, Hauptfehlerquellen, Trainingshistorie, Messkriterien.',
+      ];
+    default:
+      return [
+        'Fragen müssen Outcome, Ausgangslage, Zeitrahmen, verfügbare Zeit, Ressourcen, Hindernisse, Messkriterium und realistische Umsetzung klären.',
+      ];
+  }
+}
+
+function refinementSystemPrompt(targetQuestionCount: number, goalType: string) {
   return `
-You are the AI planning brain for an iOS productivity app called Kalendulu.
+Du bist die Diagnose- und Coaching-KI für Kalendulu.
+Antworte NUR mit gültigem JSON.
 
-Return ONLY valid JSON.
-No markdown.
-No explanations before the JSON.
-No explanations after the JSON.
+AUFGABE:
+- Analysiere das Ziel.
+- Erstelle GENAU ${targetQuestionCount} Fragen auf Deutsch.
+- Die Fragen müssen tief genug sein, damit danach ein hochpräziser Blueprint mit Problembaum, Mustererkennung, Hebeln, Failure Modes und milestone-basiertem Plan erzeugt werden kann.
+- Schwierige Ziele brauchen deutlich tiefere Diagnostik.
+- Die Fragen müssen nach Relevanz priorisiert sein.
+- Nutze Fragearten: text, long_text, single_choice, multi_choice.
 
-Task:
-1. Read the user's goal.
-2. Infer goal type, difficulty, complexity.
-3. Generate only the questions genuinely needed.
-4. Questions must be in German.
-5. Keep the JSON shape exact.
+COACHING-HALTUNG:
+- Denke wie ein fordernder Elite-Coach.
+- Gehe davon aus, dass der Benutzer extrem anspruchsvoll und perfektionistisch ist.
+- Lieber analytisch, präzise und leicht zu hart als banal oder weich.
+- Jede Frage soll helfen, Hauptproblem, Unterprobleme, Muster, Mikroskills, Engpässe oder Failure Modes sichtbar zu machen.
 
-Allowed question types:
-- text
-- long_text
-- single_choice
-- multi_choice
+DOMÄNENREGELN:
+${buildDomainRequirements(goalType as any).join('\n')}
 
-Exact JSON shape:
+JSON-SHAPE:
 {
   "goalLabel": "string",
   "goalType": "fitness|study|language|career|business|mindset|research|writing|project|other",
@@ -307,116 +432,253 @@ Exact JSON shape:
     "difficulty": "very_easy|easy|medium|hard|very_hard",
     "rationale": ["string"],
     "missingInformation": ["string"],
-    "recommendedQuestionCount": 8
+    "recommendedQuestionCount": ${targetQuestionCount},
+    "targetQuestionCount": ${targetQuestionCount}
   }
 }
 `.trim();
 }
 
-function plannerSystemPrompt() {
-  return `
-Language: German.
-Role: You are the "Execution-Planning Brain" for the iOS productivity app Kalendulu.
-Task: Convert a user's goal into a deterministic, high-precision execution plan.
-Output: Return ONLY valid JSON. No markdown. No prose.
-
-Core Rule:
-Every item must be a "Physical Action".
-If it's not a physical movement or a specific consumption/purchase, it's not a valid step.
-
-GOOD EXAMPLE:
-Goal = Lose 5kg Fat
-
-{
-  "execution_plan": {
-    "goal": "Fettverlust -5kg (Muskelerhalt-Fokus)",
-    "items": [
-      {
-        "type": "Calendar Block",
-        "title": "Ganzkörper-Krafttraining",
-        "schedule": "Mo, Mi, Fr 07:00",
-        "action": "3 Sätze Kniebeugen, Liegestütze, Rudern bis zum Muskelversagen."
-      },
-      {
-        "type": "Habit",
-        "title": "Protein-Sättigung",
-        "schedule": "Täglich 08:00 & 13:00",
-        "action": "Konsumiere 40g Protein pro Mahlzeit (Eier, Quark, Fleisch oder Tofu)."
-      },
-      {
-        "type": "Habit",
-        "title": "NEAT-Basis",
-        "schedule": "Täglich bis 20:00",
-        "action": "Erreiche 10.000 Schritte. Nutze Treppen statt Aufzug."
-      },
-      {
-        "type": "Todo",
-        "title": "Kühlschrank-Inventur",
-        "deadline": "Heute 18:00",
-        "action": "Entsorge alle verarbeiteten Süßwaren und zuckerhaltigen Getränke."
-      },
-      {
-        "type": "Todo",
-        "title": "Wochen-Einkauf",
-        "deadline": "Samstag 10:00",
-        "action": "Kaufe 2kg Brokkoli, 1kg Spinat, 2kg Hähnchen/Linsen, 30 Eier."
-      }
-    ]
-  }
+function scoreLabel(value: number): 'low' | 'medium' | 'high' {
+  if (value >= 0.76) return 'high';
+  if (value >= 0.42) return 'medium';
+  return 'low';
 }
 
-BAD EXAMPLES - AVOID THESE AT ALL COST:
-- "Überlege dir ein Kaloriendefizit"
-- "Erstelle einen Trainingsplan"
-- "Fange an, dich gesünder zu ernähren"
-- "Suche dir ein Fitnessstudio"
-- "Motiviere dich täglich"
-- "Beobachte dein Gewicht"
+function buildNextCalendarWindow(targetDateIso: string) {
+  const now = new Date();
+  const start = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+  start.setHours(18, 0, 0, 0);
 
-Logic:
-1. Specificity: Quantities (grams, reps, steps) and times (07:00, 18:00) are mandatory where possible.
-2. Logic Chain: The Todo enables the Habit. The Habit enables the Result.
-3. No Thinking: The user must be able to blindly follow the instructions.
+  const end = new Date(start.getTime() + 60 * 60 * 1000);
+  const target = new Date(targetDateIso);
+  if (Number.isFinite(target.getTime()) && end.getTime() > target.getTime()) {
+    const adjustedStart = new Date(target.getTime() - 60 * 60 * 1000);
+    return {
+      start: adjustedStart.toISOString(),
+      end: target.toISOString(),
+    };
+  }
 
-Rules:
-- The first todo must be a real concrete action.
-- The habit must be repeatable and directly goal-relevant.
-- The calendar block must be a real work block with ISO timestamps.
-- executionSteps must be the actual path to the goal, not motivational fluff.
-- Large goals need stronger depth and more concrete stages.
-- Use the user's available time realistically.
-- Prefer direct execution over abstract preparation.
-- If needed, break the path into phases.
-- Keep output compact.
-- No alternatives.
-- No review.
-- No scheduleAdjustment.
-- At most 1 routine.
-- At most 6 executionSteps.
-- At most 3 checklist items per execution step.
+  return {
+    start: start.toISOString(),
+    end: end.toISOString(),
+  };
+}
 
-Exact JSON shape:
+function buildRoutineBlocks(frequencyPerWeek: number, durationMinutes: number) {
+  const count = clamp(frequencyPerWeek, 1, 5);
+  const blocks: PlannerRoutineBlock[] = [];
+  const base = new Date();
+  base.setHours(19, 0, 0, 0);
+
+  for (let i = 0; i < count; i += 1) {
+    const start = new Date(base.getTime() + (i + 1) * 24 * 60 * 60 * 1000);
+    const end = new Date(start.getTime() + durationMinutes * 60 * 1000);
+
+    blocks.push({
+      title: `Routine Block ${i + 1}`,
+      start: start.toISOString(),
+      end: end.toISOString(),
+    });
+  }
+
+  return blocks;
+}
+
+function convertBlueprintToBundle(
+  blueprint: MasterBlueprintOutput,
+  goal: string,
+  targetDateIso: string,
+  targetStepCount: number,
+): PlannerBundle {
+  const nextCalendar = buildNextCalendarWindow(targetDateIso);
+
+  const mainStep = blueprint.executionSteps[0];
+  const mainRoutine = blueprint.routines[0];
+
+  const todoTitle =
+    mainStep?.title ||
+    'Nächste Hauptphase starten';
+
+  const habitTitle =
+    mainRoutine?.title ||
+    'Wiederkehrenden Fokusblock halten';
+
+  const systemMap = {
+    rootProblem: blueprint.rootProblem,
+    problemNodes: blueprint.graph.nodes.map((node) => ({
+      id: node.id,
+      label: node.label,
+      kind: node.kind,
+      severity: node.severity,
+      explanation: node.description,
+    })),
+    dependencyEdges: blueprint.graph.edges.map((edge) => ({
+      from: edge.from,
+      to: edge.to,
+      relation: edge.relation,
+      weight: edge.weight,
+    })),
+    patternInsights: blueprint.patternInsights.map((pattern) => ({
+      label: pattern.label,
+      explanation: pattern.explanation,
+      repetitionLikelihood: scoreLabel(pattern.repetitionLikelihood),
+      coachingValue: scoreLabel(pattern.coachingValue),
+    })),
+    leverageInsights: blueprint.leverageInsights.map((lev) => ({
+      label: lev.label,
+      explanation: lev.explanation,
+      expectedImpact: scoreLabel(lev.expectedImpact),
+      whyHighLeverage: `Urgency ${lev.urgency.toFixed(2)} · Compounding ${lev.compoundingValue.toFixed(2)} · Difficulty ${lev.difficulty.toFixed(2)}`,
+    })),
+    failureScenarios: blueprint.failureScenarios.map((failure) => ({
+      label: failure.label,
+      trigger: failure.triggerNodeIds.join(', ') || 'unbekannt',
+      consequence: failure.consequenceNodeIds.join(', ') || 'unbekannt',
+      prevention: failure.preventionActionHints.join(' · '),
+    })),
+  };
+
+  const routines: PlannerRoutine[] = blueprint.routines.map((routine) => ({
+    title: routine.title,
+    reason: routine.reason,
+    instruction: routine.reason,
+    frequencyPerWeek: routine.frequencyPerWeek,
+    durationMinutes: routine.durationMinutes,
+    reviewAfterDays: 7,
+    blocks: buildRoutineBlocks(routine.frequencyPerWeek, routine.durationMinutes),
+  }));
+
+  const executionSteps: PlannerExecutionStep[] = blueprint.executionSteps
+    .slice(0, targetStepCount)
+    .map((step, index) => ({
+      id: step.id || `step_${index + 1}`,
+      order: index + 1,
+      title: step.title,
+      explanation: step.explanation,
+      whyItMatters: step.whyItMatters,
+      estimatedDays: step.estimatedDays,
+      checklist: step.checklist.map((item, itemIndex) => ({
+        id: item.id || `c_${index + 1}_${itemIndex + 1}`,
+        label: item.label,
+        done: false,
+      })),
+      linkedTodoTitles: [todoTitle],
+      linkedHabitTitles: [habitTitle],
+    }));
+
+  while (executionSteps.length < targetStepCount) {
+    const i = executionSteps.length;
+    executionSteps.push({
+      id: `step_${i + 1}`,
+      order: i + 1,
+      title: `Fortschrittsphase ${i + 1}`,
+      explanation: 'Zusätzliche strukturierte Fortschrittsphase zur Vervollständigung des Zielpfads.',
+      whyItMatters: 'Das Ziel soll vollständig in belastbare Phasen zerlegt bleiben.',
+      estimatedDays: 4,
+      checklist: [
+        {
+          id: `c_${i + 1}_1`,
+          label: 'Phase klar ausführen',
+          done: false,
+        },
+        {
+          id: `c_${i + 1}_2`,
+          label: 'Zwischenergebnis sichern',
+          done: false,
+        },
+      ],
+      linkedTodoTitles: [todoTitle],
+      linkedHabitTitles: [habitTitle],
+    });
+  }
+
+  return {
+    primary: {
+      todo: {
+        title: todoTitle,
+        reason:
+          blueprint.rootProblem ||
+          `Hauptengpass für "${goal}" muss zuerst sauber angegangen werden.`,
+        instruction:
+          mainStep?.explanation ||
+          'Starte mit der Phase, die den größten Downstream-Hebel hat.',
+        expectedEffect:
+          'Die Hauptengstelle wird reduziert und spätere Phasen werden leichter.',
+      },
+      habit: {
+        title: habitTitle,
+        reason:
+          mainRoutine?.reason ||
+          'Ein stabiles wiederkehrendes System trägt die milestone-basierten Phasen.',
+        instruction:
+          mainRoutine?.reason ||
+          'Wiederhole den Kernblock konsequent und messbar.',
+        expectedEffect:
+          'Mehr Konstanz und weniger Zerfall zwischen den Phasen.',
+      },
+      calendar: {
+        title: mainStep?.title || 'Fokusblock',
+        start: nextCalendar.start,
+        end: nextCalendar.end,
+        reason:
+          'Der wichtigste Hebel braucht einen realen Zeitslot statt nur Absicht.',
+        instruction:
+          mainStep?.explanation ||
+          'Arbeite in diesem Block nur an der aktuell wichtigsten Phase.',
+      },
+      routines,
+    },
+    alternatives: [],
+    executionSteps,
+    systemMap,
+    planMeta: {
+      depth: blueprint.executionSteps.length >= 30 ? 'full_system' : blueprint.executionSteps.length >= 20 ? 'deep' : 'balanced',
+      difficulty:
+        blueprint.scoreBreakdown.totalScore >= 28
+          ? 'hard'
+          : blueprint.scoreBreakdown.totalScore >= 18
+            ? 'medium'
+            : 'easy',
+      complexity:
+        blueprint.graph.nodes.length >= 10
+          ? 'high_complexity'
+          : blueprint.graph.nodes.length >= 7
+            ? 'advanced'
+            : 'moderate',
+      summary: `Blueprint für "${goal}" mit Root Problem, Musterstruktur, Hebeln, Failure Modes und ${targetStepCount} Fortschrittsphasen.`,
+      targetStepCount,
+      coachStyle: 'elite_demanding_precision_problem_tree',
+    },
+  };
+}
+
+function plannerSystemPrompt(targetStepCount: number, blueprintBundle: PlannerBundle) {
+  return `
+Language: German.
+Role: You are the elite execution coach for Kalendulu.
+Return ONLY valid JSON.
+
+HARD RULES:
+1. Output EXACTLY ${targetStepCount} executionSteps.
+2. executionSteps are milestone-like phases, not trivial habits.
+3. Keep the deep structure from the provided blueprint.
+4. Preserve the root problem, leverage orientation, and failure-awareness.
+5. Do not soften the plan.
+6. Prefer precision, causal structure and demanding realism over generic advice.
+7. Routines belong in routines, not as shallow standalone steps.
+8. The user is highly demanding and perfectionistic.
+
+YOU MUST IMPROVE THIS BLUEPRINT, NOT REPLACE IT WITH GENERIC ADVICE:
+${JSON.stringify(blueprintBundle)}
+
+JSON SHAPE:
 {
   "primary": {
-    "todo": {
-      "title": "string",
-      "reason": "string",
-      "instruction": "string optional",
-      "expectedEffect": "string optional"
-    },
-    "habit": {
-      "title": "string",
-      "reason": "string",
-      "instruction": "string optional",
-      "expectedEffect": "string optional"
-    },
-    "calendar": {
-      "title": "string",
-      "start": "ISO string",
-      "end": "ISO string",
-      "reason": "string",
-      "instruction": "string optional"
-    },
+    "todo": { "title": "string", "reason": "string", "instruction": "string optional", "expectedEffect": "string optional" },
+    "habit": { "title": "string", "reason": "string", "instruction": "string optional", "expectedEffect": "string optional" },
+    "calendar": { "title": "string", "start": "ISO string", "end": "ISO string", "reason": "string", "instruction": "string optional" },
     "routines": [
       {
         "title": "string",
@@ -425,15 +687,12 @@ Exact JSON shape:
         "frequencyPerWeek": 3,
         "durationMinutes": 30,
         "blocks": [
-          {
-            "title": "string",
-            "start": "ISO string",
-            "end": "ISO string"
-          }
+          { "title": "string", "start": "ISO string", "end": "ISO string" }
         ]
       }
     ]
   },
+  "alternatives": [],
   "executionSteps": [
     {
       "id": "step_1",
@@ -449,460 +708,493 @@ Exact JSON shape:
       "linkedHabitTitles": ["string"]
     }
   ],
+  "systemMap": {
+    "rootProblem": "string",
+    "problemNodes": [],
+    "dependencyEdges": [],
+    "patternInsights": [],
+    "leverageInsights": [],
+    "failureScenarios": []
+  },
   "planMeta": {
     "depth": "compact|balanced|deep|full_system",
     "difficulty": "very_easy|easy|medium|hard|very_hard",
     "complexity": "simple|moderate|advanced|high_complexity",
-    "summary": "string"
+    "summary": "string",
+    "targetStepCount": ${targetStepCount},
+    "coachStyle": "elite_demanding_precision_problem_tree"
   }
 }
 `.trim();
 }
 
-function buildFallbackRefinement(goal: string): GoalRefinementResponse {
+async function callGroqRaw(params: {
+  env: Env;
+  model: string;
+  system: string;
+  user: string;
+  temperature?: number;
+  maxCompletionTokens?: number;
+  forceJson?: boolean;
+}) {
+  const body: Record<string, unknown> = {
+    model: params.model,
+    temperature: params.temperature ?? 0.2,
+    max_completion_tokens: params.maxCompletionTokens ?? 3800,
+    messages: [
+      { role: 'system', content: params.system },
+      { role: 'user', content: params.user },
+    ],
+  };
+
+  if (params.forceJson) {
+    body.response_format = { type: 'json_object' };
+  }
+
+  const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${params.env.GROQ_API_KEY}`,
+    },
+    body: JSON.stringify(body),
+  });
+
+  const raw = await res.text();
+
+  if (!res.ok) {
+    throw new Error(`Groq error ${res.status}: ${raw}`);
+  }
+
+  const parsed = JSON.parse(raw) as {
+    choices?: Array<{ message?: { content?: string } }>;
+  };
+
+  const content = parsed.choices?.[0]?.message?.content;
+  if (!content) {
+    throw new Error('Groq returned empty content.');
+  }
+
+  return content;
+}
+
+function buildFallbackRefinement(goal: string, difficultyLevel: number): GoalRefinementResponse {
+  const count = questionCountForDifficulty(difficultyLevel);
+  const goalType = inferGoalType(goal);
+
+  const baseQuestions: GoalQuestion[] = [
+    {
+      id: 'target_outcome',
+      title: 'Was genau willst du konkret erreichen?',
+      type: 'long_text',
+      required: true,
+      section: 'Ziel',
+      whyAsked: 'Ohne exakt definiertes Endergebnis kann kein präziser Blueprint gebaut werden.',
+      priority: 10,
+      placeholder: 'Beschreibe das Ziel messbar und konkret.',
+    },
+    {
+      id: 'starting_point',
+      title: 'Wo stehst du aktuell genau in Bezug auf dieses Ziel?',
+      type: 'long_text',
+      required: true,
+      section: 'Ausgangslage',
+      whyAsked: 'Der Plan hängt stark vom echten Startpunkt ab.',
+      priority: 10,
+      placeholder: 'Beschreibe deinen Ist-Zustand.',
+    },
+    {
+      id: 'deadline',
+      title: 'Bis wann willst du das Ziel erreichen?',
+      type: 'text',
+      required: true,
+      section: 'Zeitrahmen',
+      whyAsked: 'Tempo, Phasen und Belastung hängen von der Deadline ab.',
+      priority: 9,
+      placeholder: 'z. B. 2026-10-31',
+    },
+    {
+      id: 'weekly_time',
+      title: 'Wie viele Stunden pro Woche kannst du realistisch investieren?',
+      type: 'text',
+      required: true,
+      section: 'Ressourcen',
+      whyAsked: 'Das System muss auf echter verfügbarer Zeit basieren.',
+      priority: 9,
+      placeholder: 'z. B. 8',
+    },
+    {
+      id: 'root_bottleneck_guess',
+      title: 'Was ist dein größtes Hindernis oder dein größter Engpass?',
+      type: 'long_text',
+      required: true,
+      section: 'Engpass',
+      whyAsked: 'Ein guter Coach beginnt mit dem wahrscheinlich größten Downstream-Problem.',
+      priority: 8,
+      placeholder: 'z. B. Technik, Zeitmangel, Fokus, fehlende Struktur, fehlendes Wissen',
+    },
+  ];
+
+  while (baseQuestions.length < count) {
+    const index = baseQuestions.length + 1;
+    baseQuestions.push({
+      id: `extra_${index}`,
+      title: `Zusatzfrage ${index}: Welche Detailinformation fehlt noch, damit das Ziel als Problembaum modelliert werden kann?`,
+      type: 'text',
+      required: true,
+      section: 'Vertiefung',
+      whyAsked: 'Komplexe Ziele brauchen Präzision auf Unterproblem-Ebene.',
+      priority: Math.max(1, 10 - index),
+      placeholder: 'Kurze, konkrete Antwort',
+    });
+  }
+
   return {
     goalLabel: goal || 'Neues Ziel',
-    goalType: 'other',
-    questions: [
-      {
-        id: 'outcome',
-        title: 'Was willst du ganz konkret erreichen?',
-        type: 'long_text',
-        required: true,
-        section: 'Ziel',
-        whyAsked: 'Die KI braucht ein klares Zielbild.',
-        priority: 10,
-        placeholder: 'Beschreibe dein Ziel möglichst konkret.',
-      },
-      {
-        id: 'why',
-        title: 'Warum ist dir dieses Ziel wirklich wichtig?',
-        type: 'long_text',
-        required: true,
-        section: 'Motivation',
-        whyAsked: 'Das Warum beeinflusst die Planstruktur.',
-        priority: 9,
-        placeholder: 'Was verbessert sich dadurch für dich?',
-      },
-      {
-        id: 'deadline',
-        title: 'Bis wann möchtest du das ungefähr erreichen?',
-        type: 'text',
-        required: true,
-        section: 'Zeitrahmen',
-        whyAsked: 'Der Zeitrahmen bestimmt den Plan.',
-        priority: 9,
-        placeholder: 'z. B. in 3 Monaten',
-      },
-      {
-        id: 'days_per_week',
-        title: 'An wie vielen Tagen pro Woche kannst du realistisch daran arbeiten?',
-        type: 'single_choice',
-        required: true,
-        section: 'Kapazität',
-        whyAsked: 'Damit der Plan realistisch bleibt.',
-        priority: 8,
-        options: [
-          { id: '2', label: '2 Tage' },
-          { id: '3', label: '3 Tage' },
-          { id: '4', label: '4 Tage' },
-          { id: '5', label: '5 Tage' },
-          { id: '6', label: '6 Tage' },
-          { id: '7', label: '7 Tage' },
-        ],
-      },
-      {
-        id: 'minutes_per_day',
-        title: 'Wie viele Minuten pro Tag sind realistisch?',
-        type: 'single_choice',
-        required: true,
-        section: 'Kapazität',
-        whyAsked: 'Damit die KI keine unrealistischen Blöcke plant.',
-        priority: 8,
-        options: [
-          { id: '15', label: '15 Minuten' },
-          { id: '30', label: '30 Minuten' },
-          { id: '45', label: '45 Minuten' },
-          { id: '60', label: '60 Minuten' },
-          { id: '90', label: '90 Minuten' },
-        ],
-      },
-    ],
+    goalType,
+    questions: baseQuestions.slice(0, count),
     analysis: {
-      category: 'other',
-      complexity: 'moderate',
-      difficulty: 'medium',
-      rationale: ['Fallback-Fragen wurden verwendet, weil das Modell kein sauberes JSON geliefert hat.'],
-      missingInformation: ['genauer Zielzustand', 'Zeitrahmen', 'realistische Kapazität'],
-      recommendedQuestionCount: 5,
+      category: goalType,
+      complexity: difficultyLevel >= 8 ? 'high_complexity' : difficultyLevel >= 5 ? 'advanced' : 'moderate',
+      difficulty:
+        difficultyLevel >= 9 ? 'very_hard' :
+        difficultyLevel >= 7 ? 'hard' :
+        difficultyLevel >= 4 ? 'medium' : 'easy',
+      rationale: ['Fallback-Fragenset wurde erzeugt, weil das Modell keine saubere JSON-Antwort geliefert hat.'],
+      missingInformation: ['Weitere Mikrodetails werden in der nächsten Planungsstufe modelliert.'],
+      recommendedQuestionCount: count,
+      targetQuestionCount: count,
     },
   };
 }
 
-function validateRefinement(data: any, fallbackGoal: string): GoalRefinementResponse {
-  const rawQuestions = ensureArray<any>(data?.questions);
+function extractWeeklyHours(body: Record<string, unknown>) {
+  const direct = safeNumber(body.weeklyHours, NaN);
+  if (Number.isFinite(direct)) return clamp(direct, 1, 40);
 
-  const questions = rawQuestions
-    .map((q, index) => {
-      const type = ['text', 'single_choice', 'multi_choice', 'long_text'].includes(q?.type)
-        ? q.type
-        : 'text';
+  const answers = body.answers as Record<string, unknown> | undefined;
+  if (answers) {
+    const fromWeeklyHours = Number(answers.weekly_hours);
+    if (Number.isFinite(fromWeeklyHours)) return clamp(fromWeeklyHours, 1, 40);
 
-      const normalized = {
-        id: safeString(q?.id, `q_${index + 1}`),
-        title: safeString(q?.title, '').trim(),
-        type,
-        required: q?.required !== false,
-        section: safeString(q?.section, 'Allgemein'),
-        whyAsked: safeString(q?.whyAsked, ''),
-        priority: safeNumber(q?.priority, 1),
-        placeholder: q?.placeholder ? safeString(q.placeholder) : undefined,
-        helpText: q?.helpText ? safeString(q.helpText) : undefined,
-        options: Array.isArray(q?.options)
-          ? q.options
-              .map((opt: any, optIndex: number) => ({
-                id: safeString(opt?.id, `opt_${index + 1}_${optIndex + 1}`),
-                label: safeString(opt?.label, '').trim(),
-              }))
-              .filter((opt: { id: string; label: string }) => opt.label.length > 0)
-          : undefined,
-      };
-
-      if (!normalized.title) return null;
-
-      if (
-        (type === 'single_choice' || type === 'multi_choice') &&
-        (!normalized.options || normalized.options.length === 0)
-      ) {
-        return {
-          ...normalized,
-          type: 'text' as const,
-          options: undefined,
-        };
-      }
-
-      return normalized;
-    })
-    .filter(Boolean) as GoalQuestion[];
-
-  if (!questions.length) {
-    return buildFallbackRefinement(fallbackGoal);
+    const fromMinutesPerDay = Number(answers.minutes_per_day);
+    const fromDaysPerWeek = Number(answers.days_per_week);
+    if (Number.isFinite(fromMinutesPerDay) && Number.isFinite(fromDaysPerWeek)) {
+      return clamp((fromMinutesPerDay * fromDaysPerWeek) / 60, 1, 40);
+    }
   }
 
-  return {
-    goalLabel: safeString(data?.goalLabel, fallbackGoal || 'Neues Ziel'),
-    goalType: safeString(data?.goalType, safeString(data?.analysis?.category, 'other')),
-    questions,
-    analysis: data?.analysis && typeof data.analysis === 'object'
-      ? {
-          category: safeString(data.analysis.category, 'other'),
-          complexity: safeString(data.analysis.complexity, 'moderate'),
-          difficulty: safeString(data.analysis.difficulty, 'medium'),
-          rationale: ensureArray<string>(data.analysis.rationale),
-          missingInformation: ensureArray<string>(data.analysis.missingInformation),
-          recommendedQuestionCount: safeNumber(data.analysis.recommendedQuestionCount, questions.length),
-        }
-      : {
-          category: 'other',
-          complexity: 'moderate',
-          difficulty: 'medium',
-          rationale: [],
-          missingInformation: [],
-          recommendedQuestionCount: questions.length,
-        },
-  };
+  return 8;
 }
 
-function buildFallbackPlanner(goalLabel = 'Dein Ziel'): PlannerBundle {
-  const now = new Date();
-  const start = new Date(now.getTime() + 60 * 60 * 1000);
-  const end = new Date(start.getTime() + 45 * 60 * 1000);
+function buildSignalsFromBody(body: Record<string, unknown>) {
+  const signals: GoalStateSignal[] = [];
 
-  return {
-    primary: {
-      todo: {
-        title: 'Proteinreiche Lebensmittel einkaufen',
-        reason: `Damit du "${goalLabel}" direkt praktisch umsetzen kannst.`,
-        instruction: 'Kaufe heute konkrete Lebensmittel für 3 einfache proteinreiche Mahlzeiten.',
-      },
-      habit: {
-        title: 'Jeden Tag proteinreich frühstücken',
-        reason: 'Das macht Sättigung und Struktur beim Abnehmen deutlich einfacher.',
-        instruction: 'Starte jeden Morgen mit einer klaren eiweißreichen Mahlzeit.',
-      },
-      calendar: {
-        title: 'Ganzkörpertraining',
-        start: start.toISOString(),
-        end: end.toISOString(),
-        reason: 'Ein fester Trainingsblock ist ein echter Fortschrittsschritt.',
-        instruction: '3 Runden mit Kniebeugen, Liegestützen, Ausfallschritten und Rudern.',
-      },
-      routines: [
-        {
-          title: 'Täglicher Spaziergang',
-          reason: 'Mehr Bewegung im Alltag erhöht den Kalorienverbrauch ohne Überforderung.',
-          instruction: '30 Minuten zügig gehen.',
-          frequencyPerWeek: 7,
-          durationMinutes: 30,
-          blocks: [
-            {
-              title: 'Spaziergang',
-              start: new Date(start.getTime() + 10 * 60 * 60 * 1000).toISOString(),
-              end: new Date(start.getTime() + 10 * 60 * 60 * 1000 + 30 * 60 * 1000).toISOString(),
-            },
-          ],
-        },
-      ],
-    },
-    alternatives: [],
-    executionSteps: [
-      {
-        id: 'step_1',
-        order: 1,
-        title: 'Ernährung sofort sauber stellen',
-        explanation: 'Starte direkt mit konkreten Mahlzeiten statt nur über Ernährung nachzudenken.',
-        whyItMatters: 'Abnehmen scheitert oft nicht am Wissen, sondern an fehlender Umsetzung im Alltag.',
-        estimatedDays: 3,
-        checklist: [
-          { id: 'c1', label: 'Proteinreiche Lebensmittel einkaufen', done: false },
-          { id: 'c2', label: '3 einfache Mahlzeiten für die nächsten Tage festlegen', done: false },
-        ],
-        linkedTodoTitles: ['Proteinreiche Lebensmittel einkaufen'],
-        linkedHabitTitles: ['Jeden Tag proteinreich frühstücken'],
-      },
-      {
-        id: 'step_2',
-        order: 2,
-        title: 'Festen Bewegungsrhythmus starten',
-        explanation: 'Setze feste Trainingseinheiten und einfache tägliche Bewegung um.',
-        whyItMatters: 'Konstanz ist beim Abnehmen stärker als einzelne motivierte Tage.',
-        estimatedDays: 7,
-        checklist: [
-          { id: 'c3', label: 'Erstes Ganzkörpertraining absolvieren', done: false },
-          { id: 'c4', label: 'An 5 Tagen spazieren gehen', done: false },
-        ],
-        linkedTodoTitles: [],
-        linkedHabitTitles: ['Täglicher Spaziergang'],
-      },
-      {
-        id: 'step_3',
-        order: 3,
-        title: 'Erste Woche stabil durchziehen',
-        explanation: 'Wiederhole Ernährung und Bewegung ohne ständig alles zu ändern.',
-        whyItMatters: 'Der Körper reagiert auf Wiederholung, nicht auf perfekte Einzelaktionen.',
-        estimatedDays: 7,
-        checklist: [
-          { id: 'c5', label: '7 Tage Frühstück durchziehen', done: false },
-          { id: 'c6', label: '2 Trainings absolvieren', done: false },
-        ],
-        linkedTodoTitles: [],
-        linkedHabitTitles: ['Jeden Tag proteinreich frühstücken'],
-      },
-    ],
-    planMeta: {
-      depth: 'balanced',
-      difficulty: 'medium',
-      complexity: 'moderate',
-      summary: 'Fallback-Plan wurde verwendet, weil der Modell-Output unvollständig war.',
-    },
-  };
-}
-
-function validatePlanner(data: any, fallbackGoalLabel = 'Dein Ziel'): PlannerBundle {
-  const primaryTodoTitle = safeString(data?.primary?.todo?.title);
-  const primaryHabitTitle = safeString(data?.primary?.habit?.title);
-  const primaryCalendarTitle = safeString(data?.primary?.calendar?.title);
-
-  if (!primaryTodoTitle || !primaryHabitTitle || !primaryCalendarTitle) {
-    return buildFallbackPlanner(fallbackGoalLabel);
+  const answers = (body.answers ?? {}) as Record<string, unknown>;
+  for (const [key, value] of Object.entries(answers)) {
+    if (
+      typeof value === 'string' ||
+      typeof value === 'number' ||
+      typeof value === 'boolean'
+    ) {
+      signals.push({
+        key,
+        value,
+        confidence: 0.85,
+      });
+    } else if (Array.isArray(value)) {
+      signals.push({
+        key,
+        value: value.join(', '),
+        confidence: 0.75,
+      });
+    }
   }
 
-  const routines = ensureArray<any>(data?.primary?.routines)
-    .slice(0, 1)
-    .map((routine, index) => ({
-      title: safeString(routine?.title, `Routine ${index + 1}`),
-      reason: safeString(routine?.reason, 'Wiederkehrende Routine.'),
-      instruction: safeString(routine?.instruction, '') || undefined,
-      frequencyPerWeek: Math.max(1, safeNumber(routine?.frequencyPerWeek, 1)),
-      durationMinutes: routine?.durationMinutes
-        ? safeNumber(routine.durationMinutes, 20)
-        : undefined,
-      blocks: ensureArray<any>(routine?.blocks).slice(0, 3).map((block, blockIndex) => ({
-        title: safeString(block?.title, `Block ${blockIndex + 1}`),
-        start: safeString(block?.start, new Date().toISOString()),
-        end: safeString(
-          block?.end,
-          new Date(Date.now() + 30 * 60 * 1000).toISOString(),
-        ),
-      })),
-    }));
+  const profile = (body.profile ?? {}) as Record<string, unknown>;
+  for (const [key, value] of Object.entries(profile)) {
+    if (
+      typeof value === 'string' ||
+      typeof value === 'number' ||
+      typeof value === 'boolean'
+    ) {
+      signals.push({
+        key: `profile_${key}`,
+        value,
+        confidence: 0.75,
+      });
+    }
+  }
 
-  const executionSteps = ensureArray<any>(data?.executionSteps)
-    .slice(0, 6)
+  const userPlanningProfile = (body.userPlanningProfile ?? {}) as Record<string, unknown>;
+  for (const [key, value] of Object.entries(userPlanningProfile)) {
+    if (
+      typeof value === 'string' ||
+      typeof value === 'number' ||
+      typeof value === 'boolean'
+    ) {
+      signals.push({
+        key: `planning_${key}`,
+        value,
+        confidence: 0.72,
+      });
+    }
+  }
+
+  return signals;
+}
+
+function normalizePlannerBundle(
+  bundle: PlannerBundle,
+  targetStepCount: number,
+): PlannerBundle {
+  const normalizedSteps = ensureArray<PlannerExecutionStep>(bundle.executionSteps)
+    .slice(0, targetStepCount)
     .map((step, index) => ({
-      id: safeString(step?.id, `step_${index + 1}`),
-      order: Math.max(1, safeNumber(step?.order, index + 1)),
-      title: safeString(step?.title, `Schritt ${index + 1}`),
-      explanation: safeString(step?.explanation, ''),
-      whyItMatters: safeString(step?.whyItMatters, ''),
-      estimatedDays: step?.estimatedDays ? safeNumber(step.estimatedDays, 1) : undefined,
-      checklist: ensureArray<any>(step?.checklist).slice(0, 3).map((item, itemIndex) => ({
-        id: safeString(item?.id, `check_${index + 1}_${itemIndex + 1}`),
-        label: safeString(item?.label, `Aufgabe ${itemIndex + 1}`),
-        done: item?.done === true,
-      })),
-      linkedTodoTitles: ensureArray<string>(step?.linkedTodoTitles),
-      linkedHabitTitles: ensureArray<string>(step?.linkedHabitTitles),
+      id: step.id || `step_${index + 1}`,
+      order: index + 1,
+      title: step.title,
+      explanation: step.explanation,
+      whyItMatters: step.whyItMatters,
+      estimatedDays: step.estimatedDays,
+      checklist: ensureArray<PlannerExecutionChecklistItem>(step.checklist)
+        .slice(0, 4)
+        .map((item, itemIndex) => ({
+          id: item.id || `c_${index + 1}_${itemIndex + 1}`,
+          label: item.label,
+          done: false,
+        })),
+      linkedTodoTitles: ensureArray<string>(step.linkedTodoTitles),
+      linkedHabitTitles: ensureArray<string>(step.linkedHabitTitles),
     }));
 
-  if (!executionSteps.length) {
-    return buildFallbackPlanner(fallbackGoalLabel);
+  while (normalizedSteps.length < targetStepCount) {
+    const index = normalizedSteps.length;
+    normalizedSteps.push({
+      id: `step_${index + 1}`,
+      order: index + 1,
+      title: `Fortschrittsphase ${index + 1}`,
+      explanation:
+        'Zusätzliche klare Umsetzungsphase zur vollständigen Zielkette.',
+      whyItMatters:
+        'Das Ziel soll in belastbare Phasen statt in weiche Tipps zerlegt bleiben.',
+      estimatedDays: 4,
+      checklist: [
+        { id: `c_${index + 1}_1`, label: 'Kernaufgabe der Phase durchführen', done: false },
+        { id: `c_${index + 1}_2`, label: 'Zwischenergebnis sichern', done: false },
+      ],
+      linkedTodoTitles: [bundle.primary.todo.title],
+      linkedHabitTitles: [bundle.primary.habit.title],
+    });
   }
 
   return {
-    primary: {
-      todo: {
-        title: primaryTodoTitle,
-        reason: safeString(data?.primary?.todo?.reason, 'Passender nächster Schritt.'),
-        instruction: safeString(data?.primary?.todo?.instruction, '') || undefined,
-        expectedEffect: safeString(data?.primary?.todo?.expectedEffect, '') || undefined,
-      },
-      habit: {
-        title: primaryHabitTitle,
-        reason: safeString(data?.primary?.habit?.reason, 'Passende Gewohnheit.'),
-        instruction: safeString(data?.primary?.habit?.instruction, '') || undefined,
-        expectedEffect: safeString(data?.primary?.habit?.expectedEffect, '') || undefined,
-      },
-      calendar: {
-        title: primaryCalendarTitle,
-        start: safeString(data?.primary?.calendar?.start, new Date().toISOString()),
-        end: safeString(
-          data?.primary?.calendar?.end,
-          new Date(Date.now() + 45 * 60 * 1000).toISOString(),
-        ),
-        reason: safeString(data?.primary?.calendar?.reason, 'Passender Fokusblock.'),
-        instruction: safeString(data?.primary?.calendar?.instruction, '') || undefined,
-      },
-      routines,
-    },
-    alternatives: [],
-    executionSteps,
-    planMeta: {
-      depth: ['compact', 'balanced', 'deep', 'full_system'].includes(data?.planMeta?.depth)
-        ? (data.planMeta.depth as PlanDepth)
-        : 'balanced',
-      difficulty: safeString(data?.planMeta?.difficulty, 'medium'),
-      complexity: safeString(data?.planMeta?.complexity, 'moderate'),
-      summary: safeString(data?.planMeta?.summary, 'Plan erfolgreich erzeugt.'),
-    },
+    ...bundle,
+    executionSteps: normalizedSteps,
   };
 }
 
-async function handleRefine(request: Request, env: Env) {
-  const body: any = await request.json().catch(() => null);
-  const goal = safeString(body?.goal).trim();
-
-  if (!goal) {
-    return errorResponse('Goal is required.');
-  }
-
-  const payload = {
-    goal,
-    profile: body?.profile ?? null,
-    pastGoals: body?.pastGoals ?? [],
-    existingAnswers: body?.existingAnswers ?? {},
-  };
-
-  const model = env.GROQ_MODEL_REFINE || 'openai/gpt-oss-20b';
-
-  const rawContent = await callGroqRaw({
-    env,
-    model,
-    system: refinementSystemPrompt(),
-    user: JSON.stringify(payload),
-    temperature: 0.2,
-    maxCompletionTokens: 1600,
-    forceJson: true,
-  });
-
-  console.log('RAW REFINE CONTENT:\n', rawContent);
-
-  const parsed = parseModelJsonLoose<any>(rawContent);
-
-  if (!parsed) {
-    console.log('REFINE FALLBACK USED');
-    return jsonResponse(buildFallbackRefinement(goal));
-  }
-
-  return jsonResponse(validateRefinement(parsed, goal));
-}
-
-async function handleSuggest(request: Request, env: Env) {
-  const body: any = await request.json().catch(() => null);
-  const model = env.GROQ_MODEL_PLAN || 'openai/gpt-oss-20b';
-
-  const rawContent = await callGroqRaw({
-    env,
-    model,
-    system: plannerSystemPrompt(),
-    user: JSON.stringify(body ?? {}),
-    temperature: 0.15,
-    maxCompletionTokens: 3200,
-    forceJson: true,
-  });
-
-  console.log('RAW PLAN CONTENT:\n', rawContent);
-
-  const parsed = parseModelJsonLoose<any>(rawContent);
-
-  if (!parsed) {
-    console.log('PLAN FALLBACK USED');
-    return jsonResponse(buildFallbackPlanner('Dein Ziel'));
-  }
-
-  const goalLabel =
-    safeString(body?.answers?.outcome) ||
-    safeString(body?.goals?.[0]?.title) ||
-    'Dein Ziel';
-
-  return jsonResponse(validatePlanner(parsed, goalLabel));
+function validateSecret(request: Request, env: Env) {
+  if (!env.APP_SHARED_SECRET) return true;
+  const headerSecret = request.headers.get('X-App-Secret');
+  return headerSecret === env.APP_SHARED_SECRET;
 }
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
+    if (request.method === 'OPTIONS') {
+      return jsonResponse({ ok: true });
+    }
+
+    if (!validateSecret(request, env)) {
+      return errorResponse('Unauthorized', 401);
+    }
+
     const url = new URL(request.url);
 
-    if (request.method === 'OPTIONS') {
-      return jsonResponse({}, 204);
-    }
-
-    if (env.APP_SHARED_SECRET) {
-      const header = request.headers.get('X-App-Secret');
-      if (header !== env.APP_SHARED_SECRET) {
-        return errorResponse('Unauthorized', 401);
-      }
-    }
-
     try {
+      if (request.method === 'GET' && url.pathname === '/health') {
+        return jsonResponse({ ok: true });
+      }
+
+      if (request.method !== 'POST') {
+        return errorResponse('Method not allowed', 405);
+      }
+
+      const body = (await request.json()) as Record<string, unknown>;
+
       if (url.pathname === '/goal/refine') {
-        if (request.method !== 'POST') return errorResponse('Method not allowed', 405);
-        return await handleRefine(request, env);
+        const goal = safeString(body.goal).trim();
+        const difficultyLevel = clamp(safeNumber(body.difficultyLevel, 5), 1, 10);
+        const targetQuestionCount = questionCountForDifficulty(difficultyLevel);
+        const goalType = inferGoalType(goal);
+
+        if (!goal) {
+          return errorResponse('Goal is required.', 400);
+        }
+
+        const system = refinementSystemPrompt(targetQuestionCount, goalType);
+        const user = JSON.stringify({
+          goal,
+          difficultyLevel,
+          targetQuestionCount,
+          targetDate: safeString(body.targetDate),
+          pastGoals: ensureArray(body.pastGoals),
+          profile: body.profile ?? {},
+          existingAnswers: body.existingAnswers ?? {},
+        });
+
+        try {
+          const raw = await callGroqRaw({
+            env,
+            model: env.GROQ_MODEL_REFINE || 'llama-3.3-70b-versatile',
+            system,
+            user,
+            temperature: 0.15,
+            maxCompletionTokens: 3000,
+            forceJson: true,
+          });
+
+          const parsed = parseModelJsonLoose<GoalRefinementResponse>(raw);
+
+          if (!parsed || !Array.isArray(parsed.questions) || !parsed.questions.length) {
+            return jsonResponse(buildFallbackRefinement(goal, difficultyLevel));
+          }
+
+          const normalized: GoalRefinementResponse = {
+            goalLabel: parsed.goalLabel || goal,
+            goalType: parsed.goalType || goalType,
+            questions: parsed.questions.slice(0, targetQuestionCount),
+            analysis: {
+              category: parsed.analysis?.category || goalType,
+              complexity:
+                parsed.analysis?.complexity ||
+                (difficultyLevel >= 8 ? 'high_complexity' : difficultyLevel >= 5 ? 'advanced' : 'moderate'),
+              difficulty:
+                parsed.analysis?.difficulty ||
+                (difficultyLevel >= 9 ? 'very_hard' : difficultyLevel >= 7 ? 'hard' : difficultyLevel >= 4 ? 'medium' : 'easy'),
+              rationale: ensureArray<string>(parsed.analysis?.rationale),
+              missingInformation: ensureArray<string>(parsed.analysis?.missingInformation),
+              recommendedQuestionCount: targetQuestionCount,
+              targetQuestionCount,
+            },
+          };
+
+          return jsonResponse(normalized);
+        } catch {
+          return jsonResponse(buildFallbackRefinement(goal, difficultyLevel));
+        }
       }
 
       if (url.pathname === '/planner/suggest') {
-        if (request.method !== 'POST') return errorResponse('Method not allowed', 405);
-        return await handleSuggest(request, env);
-      }
+        const goal = safeString(body.goal).trim();
+        const difficultyLevel = clamp(safeNumber(body.difficultyLevel, 5), 1, 10);
+        const targetStepCount = stepCountForDifficulty(difficultyLevel);
+        const targetDate = safeString(body.targetDate) || new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString();
 
-      if (url.pathname === '/health') {
-        return jsonResponse({ ok: true });
+        if (!goal) {
+          return errorResponse('Goal is required.', 400);
+        }
+
+        const domain = inferDomain(goal);
+        const weeklyHours = extractWeeklyHours(body);
+        const signals = buildSignalsFromBody(body);
+
+        const blueprint = generateMasterBlueprint({
+          goalTitle: goal,
+          domain,
+          targetDateIso: targetDate,
+          difficultyLevel,
+          weeklyHours,
+          signals,
+          userStyle: {
+            ambition: 0.88,
+            perfectionism: 0.92,
+            pressureTolerance: 0.76,
+            consistency: 0.62,
+          },
+        });
+
+        const deterministicBundle = convertBlueprintToBundle(
+          blueprint,
+          goal,
+          targetDate,
+          targetStepCount,
+        );
+
+        try {
+          const system = plannerSystemPrompt(targetStepCount, deterministicBundle);
+          const user = JSON.stringify({
+            goal,
+            difficultyLevel,
+            targetStepCount,
+            targetDate,
+            profile: body.profile ?? {},
+            signals: body.signals ?? {},
+            freeSlots: body.freeSlots ?? [],
+            answers: body.answers ?? {},
+            userPlanningProfile: body.userPlanningProfile ?? {},
+            pastGoals: body.goals ?? [],
+            deterministicBlueprint: deterministicBundle,
+          });
+
+          const raw = await callGroqRaw({
+            env,
+            model: env.GROQ_MODEL_PLAN || 'llama-3.3-70b-versatile',
+            system,
+            user,
+            temperature: 0.1,
+            maxCompletionTokens: 4200,
+            forceJson: true,
+          });
+
+          const parsed = parseModelJsonLoose<PlannerBundle>(raw);
+
+          if (!parsed || !parsed.primary || !Array.isArray(parsed.executionSteps)) {
+            return jsonResponse(deterministicBundle);
+          }
+
+          const merged: PlannerBundle = {
+            primary: {
+              todo: parsed.primary.todo ?? deterministicBundle.primary.todo,
+              habit: parsed.primary.habit ?? deterministicBundle.primary.habit,
+              calendar: parsed.primary.calendar ?? deterministicBundle.primary.calendar,
+              routines: ensureArray<PlannerRoutine>(parsed.primary.routines).length
+                ? ensureArray<PlannerRoutine>(parsed.primary.routines)
+                : deterministicBundle.primary.routines,
+            },
+            alternatives: [],
+            executionSteps: parsed.executionSteps,
+            systemMap: parsed.systemMap ?? deterministicBundle.systemMap,
+            planMeta: {
+              depth:
+                parsed.planMeta?.depth ??
+                deterministicBundle.planMeta?.depth,
+              difficulty:
+                parsed.planMeta?.difficulty ??
+                deterministicBundle.planMeta?.difficulty,
+              complexity:
+                parsed.planMeta?.complexity ??
+                deterministicBundle.planMeta?.complexity,
+              summary:
+                parsed.planMeta?.summary ??
+                deterministicBundle.planMeta?.summary,
+              targetStepCount,
+              coachStyle:
+                parsed.planMeta?.coachStyle ??
+                deterministicBundle.planMeta?.coachStyle,
+            },
+          };
+
+          return jsonResponse(normalizePlannerBundle(merged, targetStepCount));
+        } catch {
+          return jsonResponse(deterministicBundle);
+        }
       }
 
       return errorResponse('Not found', 404);
     } catch (error: any) {
-      return errorResponse('Worker error', 500, {
-        detail: error instanceof Error ? error.message : String(error),
-      });
+      return errorResponse(error?.message ?? 'Unknown error', 500);
     }
   },
 };

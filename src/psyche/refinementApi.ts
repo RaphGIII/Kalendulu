@@ -10,13 +10,20 @@ const APP_SECRET = process.env.EXPO_PUBLIC_APP_SHARED_SECRET;
 
 type RefinementRequest = {
   goal: string;
+  difficultyLevel: number;
+  targetDate?: string;
   pastGoals: PsycheGoal[];
   profile: UserPlanningProfile;
   existingAnswers?: GoalAnswerMap;
 };
 
 function isGoalQuestionType(value: unknown) {
-  return value === 'text' || value === 'single_choice' || value === 'multi_choice' || value === 'long_text';
+  return (
+    value === 'text' ||
+    value === 'single_choice' ||
+    value === 'multi_choice' ||
+    value === 'long_text'
+  );
 }
 
 function isGoalRefinementResponse(value: any): value is GoalRefinementResponse {
@@ -25,13 +32,14 @@ function isGoalRefinementResponse(value: any): value is GoalRefinementResponse {
     typeof value.goalLabel === 'string' &&
     typeof value.goalType === 'string' &&
     Array.isArray(value.questions) &&
-    value.questions.every((q: any) => (
-      q &&
-      typeof q.id === 'string' &&
-      typeof q.title === 'string' &&
-      isGoalQuestionType(q.type) &&
-      typeof q.required === 'boolean'
-    ))
+    value.questions.every(
+      (q: any) =>
+        q &&
+        typeof q.id === 'string' &&
+        typeof q.title === 'string' &&
+        isGoalQuestionType(q.type) &&
+        typeof q.required === 'boolean',
+    )
   );
 }
 

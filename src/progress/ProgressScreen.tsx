@@ -1,196 +1,638 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import {
   Pressable,
   SafeAreaView,
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from 'react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import type { PlannerBundle, PlannerExecutionStep } from '../psyche/types';
+import dayjs from 'dayjs';
+import 'dayjs/locale/de';
+import { useFocusEffect } from '@react-navigation/native';
 
-const BG = '#2E437A';
-const BG_DARK = '#233A73';
-const CARD = '#314A86';
-const CARD_DARK = '#243D77';
-const TEXT = '#FFFFFF';
-const MUTED = 'rgba(255,255,255,0.72)';
-const BORDER = 'rgba(255,255,255,0.10)';
-const GOLD = '#D4AF37';
-const SUCCESS = '#7CE0A3';
+import {
+  GoalMiniStep,
+  GoalMiniStepStatus,
+  PlannerExecutionChecklistItem,
+  PlannerExecutionStep,
+  PsycheGoal,
+} from '../psyche/types';
+import { loadPsycheGoals, savePsycheGoals } from '../psyche/storage';
 
-const PLAN_STORAGE_KEY = 'kalendulu_ai_goal_plans_v2';
-const STEP_STATE_KEY = 'kalendulu_ai_goal_step_state_v2';
+dayjs.locale('de');
 
-type StoredGoalPlan = {
-  id: string;
-  title: string;
-  createdAt: string;
-  refinement: unknown;
-  planner: PlannerBundle;
+const BG = '#2B1D14';
+const BG_SOFT = '#3A281C';
+const CARD = '#4A3426';
+const CARD_LIGHT = '#5B4030';
+const CARD_DARK = '#3A281C';
+const TEXT = '#FFF8EE';
+const MUTED = 'rgba(255,248,238,0.72)';
+const BORDER = 'rgba(255,248,238,0.10)';
+const GOLD = '#D9B26B';
+const GREEN = '#7EDB7A';
+const RED = '#FF8F8F';
+
+type Props = {
+  navigation?: {
+    navigate?: (screen: string, params?: Record<string, unknown>) => void;
+  };
 };
 
-type StepItemState = Record<string, boolean>;
-type GoalStepState = Record<string, StepItemState>;
-type StepState = Record<string, GoalStepState>;
+type ManualStepCategoryId =
+  | 'focus'
+  | 'training'
+  | 'nutrition'
+  | 'study'
+  | 'admin'
+  | 'review'
+  | 'custom';
 
-function buildLineStyle(x1: number, y1: number, x2: number, y2: number) {
-  const dx = x2 - x1;
-  const dy = y2 - y1;
-  const length = Math.sqrt(dx * dx + dy * dy);
-  const angle = Math.atan2(dy, dx);
+type ManualGoalCategoryId =
+  | 'fitness'
+  | 'study'
+  | 'business'
+  | 'music'
+  | 'project'
+  | 'other';
 
-  return {
-    position: 'absolute' as const,
-    left: x1,
-    top: y1,
-    width: length,
-    height: 2,
-    backgroundColor: 'rgba(255,255,255,0.45)',
-    transform: [{ rotate: `${angle}rad` }],
-  };
+type ManualStep = GoalMiniStep & {
+  category?: ManualStepCategoryId;
+  color?: string;
+  note?: string;
+  source?: 'manual';
+};
+
+const STEP_CATEGORIES: Array<{
+  id: ManualStepCategoryId;
+  label: string;
+  color: string;
+  bg: string;
+}> = [
+  { id: 'focus', label: 'Fokus', color: '#8FD3FF', bg: 'rgba(143,211,255,0.16)' },
+  { id: 'training', label: 'Training', color: '#7EDB7A', bg: 'rgba(126,219,122,0.16)' },
+  { id: 'nutrition', label: 'Ernährung', color: '#FFC16B', bg: 'rgba(255,193,107,0.16)' },
+  { id: 'study', label: 'Lernen', color: '#C6A2FF', bg: 'rgba(198,162,255,0.16)' },
+  { id: 'admin', label: 'Planung', color: '#FF9CC7', bg: 'rgba(255,156,199,0.16)' },
+  { id: 'review', label: 'Review', color: '#9BE7D8', bg: 'rgba(155,231,216,0.16)' },
+  { id: 'custom', label: 'Custom', color: '#D9B26B', bg: 'rgba(217,178,107,0.16)' },
+];
+
+const GOAL_CATEGORIES: Array<{
+  id: ManualGoalCategoryId;
+  label: string;
+  color: string;
+  bg: string;
+}> = [
+  { id: 'fitness', label: 'Fitness', color: '#7EDB7A', bg: 'rgba(126,219,122,0.16)' },
+  { id: 'study', label: 'Lernen', color: '#C6A2FF', bg: 'rgba(198,162,255,0.16)' },
+  { id: 'business', label: 'Business', color: '#FFB870', bg: 'rgba(255,184,112,0.16)' },
+  { id: 'music', label: 'Musik', color: '#8FD3FF', bg: 'rgba(143,211,255,0.16)' },
+  { id: 'project', label: 'Projekt', color: '#FF9CC7', bg: 'rgba(255,156,199,0.16)' },
+  { id: 'other', label: 'Andere', color: GOLD, bg: 'rgba(217,178,107,0.16)' },
+];
+
+function uid(prefix: string) {
+  return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
-function getNodePositions(count: number) {
-  if (count <= 1) return [{ x: 230, y: 255 }];
-
-  const leftXs = [220, 165, 115, 80, 55, 38];
-  const rightXs = [245, 270, 295, 315, 330, 340];
-  const topY = 42;
-  const bottomY = 255;
-  const gap = (bottomY - topY) / Math.max(count - 1, 1);
-
-  return Array.from({ length: count }).map((_, index) => {
-    const y = bottomY - gap * index;
-    const x =
-      index === count - 1
-        ? 195
-        : index % 2 === 0
-          ? leftXs[Math.min(index, leftXs.length - 1)]
-          : rightXs[Math.min(index, rightXs.length - 1)];
-
-    return { x, y };
-  });
+function clamp(value: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, value));
 }
 
-function getItemChecked(
-  state: StepState,
-  goalId: string,
-  stepId: string,
-  itemId: string,
-  fallback = false,
-) {
-  const goalState = state[goalId];
-  if (!goalState) return fallback;
-
-  const stepState = goalState[stepId];
-  if (!stepState) return fallback;
-
-  const value = stepState[itemId];
-  return typeof value === 'boolean' ? value : fallback;
+function getStepCategoryMeta(category?: string) {
+  return STEP_CATEGORIES.find((item) => item.id === category) ?? STEP_CATEGORIES[0];
 }
 
-function progressForStep(step: PlannerExecutionStep, state: StepState, goalId: string) {
+function getGoalCategoryMeta(category?: string) {
+  return (
+    GOAL_CATEGORIES.find((item) => item.id === category) ??
+    GOAL_CATEGORIES[GOAL_CATEGORIES.length - 1]
+  );
+}
+
+function getManualSteps(goal: PsycheGoal): ManualStep[] {
+  const raw = goal.manualSteps;
+  return Array.isArray(raw) ? (raw as ManualStep[]) : [];
+}
+
+function getAiSteps(goal: PsycheGoal): PlannerExecutionStep[] {
+  if (Array.isArray(goal.executionPlan?.steps)) {
+    return goal.executionPlan.steps;
+  }
+  return [];
+}
+
+function toMiniStepStatus(done: boolean): GoalMiniStepStatus {
+  return done ? 'done' : 'active';
+}
+
+function buildMiniStepsFromManual(steps: ManualStep[]): GoalMiniStep[] {
+  return steps.map((step, index) => ({
+    id: step.id,
+    order: index + 1,
+    title: step.title,
+    description: step.description,
+    done: !!step.done,
+    status: toMiniStepStatus(!!step.done),
+  }));
+}
+
+function computeGoalProgress(goal: PsycheGoal) {
+  const manualSteps = getManualSteps(goal);
+  const aiSteps = getAiSteps(goal);
+
+  const manualTotal = manualSteps.length;
+  const manualDone = manualSteps.filter((step) => step.done).length;
+
+  const aiChecklist = aiSteps.flatMap((step) => step.checklist ?? []);
+  const aiTotal = aiChecklist.length;
+  const aiDone = aiChecklist.filter((item) => item.done).length;
+
+  const total = manualTotal + aiTotal;
+  if (!total) return 0;
+
+  return Math.round(((manualDone + aiDone) / total) * 100);
+}
+
+function isAiStepComplete(step: PlannerExecutionStep) {
   const checklist = step.checklist ?? [];
-  const done = checklist.filter((item) =>
-    getItemChecked(state, goalId, step.id, item.id, item.done ?? false),
-  ).length;
-
-  return {
-    done,
-    total: checklist.length,
-    complete: checklist.length > 0 && done === checklist.length,
-  };
+  return checklist.length > 0 && checklist.every((item) => item.done);
 }
 
-export default function ProgressScreen() {
-  const [plans, setPlans] = useState<StoredGoalPlan[]>([]);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [stepState, setStepState] = useState<StepState>({});
+function GoalProgressBar({ value }: { value: number }) {
+  return (
+    <View style={styles.progressTrack}>
+      <View style={[styles.progressFill, { width: `${clamp(value, 0, 100)}%` }]} />
+    </View>
+  );
+}
 
-  useEffect(() => {
-    (async () => {
-      try {
-        const rawPlans = await AsyncStorage.getItem(PLAN_STORAGE_KEY);
-        const rawState = await AsyncStorage.getItem(STEP_STATE_KEY);
+function GoalCard({
+  goal,
+  onOpen,
+}: {
+  goal: PsycheGoal;
+  onOpen: () => void;
+}) {
+  const progress = computeGoalProgress(goal);
+  const manualCount = getManualSteps(goal).length;
+  const aiCount = getAiSteps(goal).length;
+  const categoryMeta = getGoalCategoryMeta(String(goal.category));
 
-        setPlans(rawPlans ? (JSON.parse(rawPlans) as StoredGoalPlan[]) : []);
-        setStepState(rawState ? (JSON.parse(rawState) as StepState) : {});
-      } catch (error) {
-        console.error(error);
-      }
-    })();
-  }, []);
+  return (
+    <Pressable onPress={onOpen} style={styles.goalCard}>
+      <View style={styles.goalTopRow}>
+        <View style={{ flex: 1, paddingRight: 12 }}>
+          <View style={styles.goalTopMetaRow}>
+            <View
+              style={[
+                styles.goalTypeBadge,
+                {
+                  backgroundColor: categoryMeta.bg,
+                  borderColor: `${categoryMeta.color}55`,
+                },
+              ]}
+            >
+              <Text style={[styles.goalTypeBadgeText, { color: categoryMeta.color }]}>
+                {categoryMeta.label}
+              </Text>
+            </View>
+            <Text style={styles.goalTinyMeta}>
+              {manualCount} eigene · {aiCount} KI
+            </Text>
+          </View>
 
-  const selectedPlan = useMemo(
-    () => plans.find((plan) => plan.id === selectedId) ?? null,
-    [plans, selectedId],
+          <Text style={styles.goalTitle}>{goal.title}</Text>
+          <Text style={styles.goalMeta}>
+            Ziel bis {dayjs(goal.targetDate).format('DD.MM.YYYY')}
+          </Text>
+        </View>
+
+        <Text style={styles.goalPercent}>{progress}%</Text>
+      </View>
+
+      <GoalProgressBar value={progress} />
+    </Pressable>
+  );
+}
+
+function ManualStepRow({
+  step,
+  onToggle,
+  onDelete,
+}: {
+  step: ManualStep;
+  onToggle: () => void;
+  onDelete: () => void;
+}) {
+  const meta = getStepCategoryMeta(step.category);
+
+  return (
+    <View style={styles.stepRowWrap}>
+      <View style={[styles.stepAccent, { backgroundColor: meta.color }]} />
+
+      <Pressable onPress={onToggle} style={[styles.stepRow, step.done && styles.stepRowDone]}>
+        <View style={styles.stepMain}>
+          <View style={styles.stepTopLine}>
+            <View
+              style={[
+                styles.stepCategoryBadge,
+                {
+                  backgroundColor: meta.bg,
+                  borderColor: `${meta.color}55`,
+                },
+              ]}
+            >
+              <Text style={[styles.stepCategoryText, { color: meta.color }]}>
+                {meta.label}
+              </Text>
+            </View>
+            <Text style={styles.stepStateText}>{step.done ? 'Erledigt' : 'Offen'}</Text>
+          </View>
+
+          <Text style={[styles.stepTitle, step.done && styles.stepTitleDone]}>
+            {step.title}
+          </Text>
+
+          {!!step.note && (
+            <Text style={[styles.stepNote, step.done && styles.stepNoteDone]}>
+              {step.note}
+            </Text>
+          )}
+        </View>
+
+        <View style={[styles.checkCircle, step.done && styles.checkCircleDone]}>
+          {step.done ? <Text style={styles.checkMark}>✓</Text> : null}
+        </View>
+      </Pressable>
+
+      <Pressable onPress={onDelete} style={styles.deleteMiniBtn}>
+        <Text style={styles.deleteMiniBtnText}>Löschen</Text>
+      </Pressable>
+    </View>
+  );
+}
+
+function AiChecklistRow({
+  item,
+  onToggle,
+}: {
+  item: PlannerExecutionChecklistItem;
+  onToggle: () => void;
+}) {
+  return (
+    <Pressable
+      onPress={onToggle}
+      style={[styles.aiCheckRow, item.done && styles.aiCheckRowDone]}
+    >
+      <View style={[styles.checkCircle, item.done && styles.checkCircleDone]}>
+        {item.done ? <Text style={styles.checkMark}>✓</Text> : null}
+      </View>
+      <Text style={[styles.aiCheckText, item.done && styles.aiCheckTextDone]}>{item.label}</Text>
+    </Pressable>
+  );
+}
+
+export default function ProgressScreen({ navigation }: Props) {
+  const [goals, setGoals] = useState<PsycheGoal[]>([]);
+  const [selectedGoalId, setSelectedGoalId] = useState<string | null>(null);
+
+  const [newGoalTitle, setNewGoalTitle] = useState('');
+  const [newGoalCategory, setNewGoalCategory] = useState<ManualGoalCategoryId>('other');
+  const [newGoalTargetDate, setNewGoalTargetDate] = useState(
+    dayjs().add(90, 'day').format('YYYY-MM-DD'),
   );
 
-  const selectedSteps = selectedPlan?.planner.executionSteps ?? [];
+  const [newStepTitle, setNewStepTitle] = useState('');
+  const [newStepNote, setNewStepNote] = useState('');
+  const [newStepCategory, setNewStepCategory] = useState<ManualStepCategoryId>('focus');
 
-  const currentIndex = useMemo(() => {
-    if (!selectedPlan) return 0;
+  const reloadGoals = useCallback(async () => {
+    const storedGoals = await loadPsycheGoals();
+    const normalized = storedGoals.map((goal) => ({
+      ...goal,
+      progressPercent: computeGoalProgress(goal),
+    }));
+    setGoals(normalized);
 
-    const index = selectedSteps.findIndex((step) => {
-      const p = progressForStep(step, stepState, selectedPlan.id);
-      return !p.complete;
+    setSelectedGoalId((prev) => {
+      if (!prev) return prev;
+      return normalized.some((goal) => goal.id === prev) ? prev : null;
     });
+  }, []);
 
-    return index >= 0 ? index : Math.max(selectedSteps.length - 1, 0);
-  }, [selectedPlan, selectedSteps, stepState]);
+  useFocusEffect(
+    useCallback(() => {
+      void reloadGoals();
+    }, [reloadGoals]),
+  );
 
-  const positions = useMemo(() => getNodePositions(selectedSteps.length), [selectedSteps.length]);
+  const selectedGoal = useMemo(
+    () => goals.find((goal) => goal.id === selectedGoalId) ?? null,
+    [goals, selectedGoalId],
+  );
 
-  async function toggleChecklist(goalId: string, stepId: string, itemId: string) {
-    const current = getItemChecked(stepState, goalId, stepId, itemId, false);
-
-    const next: StepState = {
-      ...stepState,
-      [goalId]: {
-        ...(stepState[goalId] ?? {}),
-        [stepId]: {
-          ...(stepState[goalId]?.[stepId] ?? {}),
-          [itemId]: !current,
-        },
-      },
-    };
-
-    setStepState(next);
-    await AsyncStorage.setItem(STEP_STATE_KEY, JSON.stringify(next));
+  async function persistGoals(nextGoals: PsycheGoal[]) {
+    setGoals(nextGoals);
+    await savePsycheGoals(nextGoals);
   }
 
-  if (!selectedPlan) {
+  async function handleCreateGoal() {
+    const trimmed = newGoalTitle.trim();
+    if (!trimmed) return;
+
+    const targetDateIso = dayjs(newGoalTargetDate, 'YYYY-MM-DD', true).isValid()
+      ? dayjs(newGoalTargetDate).endOf('day').toISOString()
+      : dayjs().add(90, 'day').endOf('day').toISOString();
+
+    const newGoal: PsycheGoal = {
+      id: uid('goal'),
+      title: trimmed,
+      category: newGoalCategory,
+      difficultyLevel: 1,
+      targetDate: targetDateIso,
+      createdAt: new Date().toISOString(),
+      why: '',
+      answers: {},
+      recommendation: {
+        summary: 'Manuell im Fortschritt-Tab erstellt.',
+      },
+      miniSteps: [],
+      executionPlan: {
+        summary: 'Eigenes Ziel mit manuellen Steps.',
+        todos: [],
+        habits: [],
+        calendarBlocks: [],
+        steps: [],
+      },
+      progressPercent: 0,
+      appliedToApp: false,
+      questionCount: 0,
+      manualSteps: [],
+      source: 'manual',
+    };
+
+    const nextGoals = [newGoal, ...goals];
+    await persistGoals(nextGoals);
+
+    setNewGoalTitle('');
+    setNewGoalCategory('other');
+    setNewGoalTargetDate(dayjs().add(90, 'day').format('YYYY-MM-DD'));
+    setSelectedGoalId(newGoal.id);
+  }
+
+  async function handleDeleteGoal(goalId: string) {
+    const nextGoals = goals.filter((goal) => goal.id !== goalId);
+    await persistGoals(nextGoals);
+    if (selectedGoalId === goalId) {
+      setSelectedGoalId(null);
+    }
+  }
+
+  async function handleAddManualStep() {
+    if (!selectedGoal) return;
+
+    const trimmed = newStepTitle.trim();
+    if (!trimmed) return;
+
+    const categoryMeta = getStepCategoryMeta(newStepCategory);
+    const currentSteps = getManualSteps(selectedGoal);
+
+    const newStep: ManualStep = {
+      id: uid('manual_step'),
+      order: currentSteps.length + 1,
+      title: trimmed,
+      description: trimmed,
+      note: newStepNote.trim(),
+      done: false,
+      status: 'active',
+      category: newStepCategory,
+      color: categoryMeta.color,
+      source: 'manual',
+    };
+
+    const nextManualSteps: ManualStep[] = [...currentSteps, newStep];
+
+    const nextGoal: PsycheGoal = {
+      ...selectedGoal,
+      manualSteps: nextManualSteps,
+      miniSteps:
+        !getAiSteps(selectedGoal).length
+          ? buildMiniStepsFromManual(nextManualSteps)
+          : selectedGoal.miniSteps,
+      progressPercent: computeGoalProgress({
+        ...selectedGoal,
+        manualSteps: nextManualSteps,
+      } as PsycheGoal),
+    };
+
+    const nextGoals = goals.map((goal) => (goal.id === selectedGoal.id ? nextGoal : goal));
+    await persistGoals(nextGoals);
+
+    setNewStepTitle('');
+    setNewStepNote('');
+    setNewStepCategory('focus');
+  }
+
+  async function handleToggleManualStep(stepId: string) {
+    if (!selectedGoal) return;
+
+    const currentSteps = getManualSteps(selectedGoal);
+    const nextManualSteps: ManualStep[] = currentSteps.map((step) =>
+      step.id === stepId
+        ? {
+            ...step,
+            done: !step.done,
+            status: toMiniStepStatus(!step.done),
+          }
+        : step,
+    );
+
+    const nextGoal: PsycheGoal = {
+      ...selectedGoal,
+      manualSteps: nextManualSteps,
+      miniSteps:
+        !getAiSteps(selectedGoal).length
+          ? buildMiniStepsFromManual(nextManualSteps)
+          : selectedGoal.miniSteps,
+      progressPercent: computeGoalProgress({
+        ...selectedGoal,
+        manualSteps: nextManualSteps,
+      } as PsycheGoal),
+    };
+
+    const nextGoals = goals.map((goal) => (goal.id === selectedGoal.id ? nextGoal : goal));
+    await persistGoals(nextGoals);
+  }
+
+  async function handleDeleteManualStep(stepId: string) {
+    if (!selectedGoal) return;
+
+    const nextManualSteps: ManualStep[] = getManualSteps(selectedGoal)
+      .filter((step) => step.id !== stepId)
+      .map((step, index) => ({
+        ...step,
+        order: index + 1,
+      }));
+
+    const nextGoal: PsycheGoal = {
+      ...selectedGoal,
+      manualSteps: nextManualSteps,
+      miniSteps:
+        !getAiSteps(selectedGoal).length
+          ? buildMiniStepsFromManual(nextManualSteps)
+          : selectedGoal.miniSteps,
+      progressPercent: computeGoalProgress({
+        ...selectedGoal,
+        manualSteps: nextManualSteps,
+      } as PsycheGoal),
+    };
+
+    const nextGoals = goals.map((goal) => (goal.id === selectedGoal.id ? nextGoal : goal));
+    await persistGoals(nextGoals);
+  }
+
+  async function handleToggleAiChecklist(stepId: string, itemId: string) {
+    if (!selectedGoal || !selectedGoal.executionPlan) return;
+
+    const nextSteps = getAiSteps(selectedGoal).map((step) => {
+      if (step.id !== stepId) return step;
+      return {
+        ...step,
+        checklist: (step.checklist ?? []).map((item) =>
+          item.id === itemId ? { ...item, done: !item.done } : item,
+        ),
+      };
+    });
+
+    const nextGoal: PsycheGoal = {
+      ...selectedGoal,
+      executionPlan: {
+        ...selectedGoal.executionPlan,
+        steps: nextSteps,
+      },
+      progressPercent: computeGoalProgress({
+        ...selectedGoal,
+        executionPlan: {
+          ...selectedGoal.executionPlan,
+          steps: nextSteps,
+        },
+      } as PsycheGoal),
+    };
+
+    const nextGoals = goals.map((goal) => (goal.id === selectedGoal.id ? nextGoal : goal));
+    await persistGoals(nextGoals);
+  }
+
+  function openGoal(goal: PsycheGoal) {
+    setSelectedGoalId(goal.id);
+  }
+
+  const canNavigate = !!navigation?.navigate;
+
+  if (!selectedGoal) {
     return (
       <SafeAreaView style={styles.safe}>
         <ScrollView contentContainerStyle={styles.content}>
           <View style={styles.hero}>
-            <Text style={styles.heroTitle}>Fortschritt</Text>
-            <Text style={styles.heroSubtitle}>
-              Hier siehst du nur deine Ziele. Klick auf ein Ziel und arbeite dann den Berg Schritt für Schritt hoch.
+            <Text style={styles.kicker}>Fortschritt</Text>
+            <Text style={styles.title}>Ziele, Steps und Fortschritt. Ohne Spielerei.</Text>
+            <Text style={styles.subtitle}>
+              Direkt hier Ziele anlegen, kleine Steps farblich kategorisieren und sauber abhaken.
             </Text>
           </View>
 
-          <View style={styles.listCard}>
-            <Text style={styles.sectionTitle}>Deine Ziele</Text>
+          <View style={styles.card}>
+            <Text style={styles.cardTitle}>Neues Ziel anlegen</Text>
 
-            {!plans.length ? (
+            <Text style={styles.label}>Zieltitel</Text>
+            <TextInput
+              value={newGoalTitle}
+              onChangeText={setNewGoalTitle}
+              placeholder="z. B. 2000 Elo erreichen / 8 kg abnehmen / Mondscheinsonate lernen"
+              placeholderTextColor="rgba(255,248,238,0.35)"
+              style={styles.input}
+            />
+
+            <Text style={styles.label}>Zielkategorie</Text>
+            <View style={styles.chipWrap}>
+              {GOAL_CATEGORIES.map((item) => {
+                const active = newGoalCategory === item.id;
+                return (
+                  <Pressable
+                    key={item.id}
+                    onPress={() => setNewGoalCategory(item.id)}
+                    style={[
+                      styles.categoryChip,
+                      {
+                        backgroundColor: active ? item.bg : 'rgba(255,248,238,0.06)',
+                        borderColor: active ? `${item.color}88` : BORDER,
+                      },
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.categoryChipText,
+                        { color: active ? item.color : TEXT },
+                      ]}
+                    >
+                      {item.label}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+
+            <Text style={styles.label}>Zieldatum</Text>
+            <TextInput
+              value={newGoalTargetDate}
+              onChangeText={setNewGoalTargetDate}
+              placeholder="YYYY-MM-DD"
+              placeholderTextColor="rgba(255,248,238,0.35)"
+              style={styles.input}
+            />
+
+            <Pressable onPress={handleCreateGoal} style={styles.primaryBtn}>
+              <Text style={styles.primaryBtnText}>Ziel erstellen</Text>
+            </Pressable>
+          </View>
+
+          <View style={styles.card}>
+            <Text style={styles.cardTitle}>Alle Ziele</Text>
+
+            {!goals.length ? (
               <Text style={styles.emptyText}>
-                Noch kein gespeicherter KI-Plan vorhanden. Erstelle zuerst im Psyche-Tab ein Ziel.
+                Noch keine Ziele vorhanden. Lege oben dein erstes Ziel an.
               </Text>
             ) : (
-              plans.map((plan) => (
-                <Pressable
-                  key={plan.id}
-                  onPress={() => setSelectedId(plan.id)}
-                  style={styles.goalCard}
-                >
-                  <Text style={styles.goalTitle}>{plan.title}</Text>
-                  <Text style={styles.goalMeta}>
-                    {plan.planner.executionSteps?.length ?? 0} Schritte
-                  </Text>
-                </Pressable>
+              goals.map((goal) => (
+                <View key={goal.id}>
+                  <GoalCard goal={goal} onOpen={() => openGoal(goal)} />
+                  <View style={styles.goalActionRow}>
+                    <Pressable onPress={() => openGoal(goal)} style={styles.secondaryBtn}>
+                      <Text style={styles.secondaryBtnText}>Öffnen</Text>
+                    </Pressable>
+
+                    {canNavigate ? (
+                      <Pressable
+                        onPress={() => navigation?.navigate?.('GoalDetail', { goalId: goal.id })}
+                        style={styles.secondaryBtn}
+                      >
+                        <Text style={styles.secondaryBtnText}>Detail</Text>
+                      </Pressable>
+                    ) : null}
+
+                    <Pressable
+                      onPress={() => handleDeleteGoal(goal.id)}
+                      style={styles.deleteBtn}
+                    >
+                      <Text style={styles.deleteBtnText}>Löschen</Text>
+                    </Pressable>
+                  </View>
+                </View>
               ))
             )}
           </View>
@@ -199,135 +641,156 @@ export default function ProgressScreen() {
     );
   }
 
+  const progress = computeGoalProgress(selectedGoal);
+  const manualSteps = getManualSteps(selectedGoal);
+  const aiSteps = getAiSteps(selectedGoal);
+  const goalMeta = getGoalCategoryMeta(String(selectedGoal.category));
+
   return (
     <SafeAreaView style={styles.safe}>
       <ScrollView contentContainerStyle={styles.content}>
-        <View style={styles.hero}>
-          <Pressable onPress={() => setSelectedId(null)} style={styles.backButton}>
-            <Text style={styles.backButtonText}>← Zurück zur Liste</Text>
-          </Pressable>
+        <Pressable onPress={() => setSelectedGoalId(null)} style={styles.backBtn}>
+          <Text style={styles.backBtnText}>← Zur Übersicht</Text>
+        </Pressable>
 
-          <Text style={styles.heroTitle}>{selectedPlan.title}</Text>
-          <Text style={styles.heroSubtitle}>
-            Arbeite einfach die Punkte ab. Mit jedem Haken steigst du höher auf den Berg.
+        <View style={styles.hero}>
+          <View style={styles.heroTopMeta}>
+            <View
+              style={[
+                styles.goalTypeBadge,
+                {
+                  backgroundColor: goalMeta.bg,
+                  borderColor: `${goalMeta.color}55`,
+                },
+              ]}
+            >
+              <Text style={[styles.goalTypeBadgeText, { color: goalMeta.color }]}>
+                {goalMeta.label}
+              </Text>
+            </View>
+            <Text style={styles.heroPercent}>{progress}%</Text>
+          </View>
+
+          <Text style={styles.title}>{selectedGoal.title}</Text>
+          <Text style={styles.subtitle}>
+            Ziel bis {dayjs(selectedGoal.targetDate).format('DD.MM.YYYY')} · {manualSteps.length}{' '}
+            eigene Steps · {aiSteps.length} KI-Phasen
           </Text>
+
+          <GoalProgressBar value={progress} />
         </View>
 
-        <View style={styles.mountainCard}>
-          <Text style={styles.sectionTitle}>Dein Weg zum Ziel</Text>
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>Eigenen Step hinzufügen</Text>
 
-          <View style={styles.mountainStage}>
-            <View style={styles.mountainLeft} />
-            <View style={styles.mountainRight} />
-            <Text style={styles.flag}>🚩</Text>
+          <Text style={styles.label}>Step</Text>
+          <TextInput
+            value={newStepTitle}
+            onChangeText={setNewStepTitle}
+            placeholder="z. B. 20 kritische Schachstellungen analysieren"
+            placeholderTextColor="rgba(255,248,238,0.35)"
+            style={styles.input}
+          />
 
-            {positions.map((pos, index) => {
-              const step = selectedSteps[index];
-              const done = progressForStep(step, stepState, selectedPlan.id).complete;
-              const active = index === currentIndex;
+          <Text style={styles.label}>Kurze Notiz</Text>
+          <TextInput
+            value={newStepNote}
+            onChangeText={setNewStepNote}
+            placeholder="z. B. mit Kandidatenzug-Protokoll"
+            placeholderTextColor="rgba(255,248,238,0.35)"
+            style={styles.input}
+          />
 
+          <Text style={styles.label}>Kategorie</Text>
+          <View style={styles.chipWrap}>
+            {STEP_CATEGORIES.map((item) => {
+              const active = newStepCategory === item.id;
               return (
-                <View
-                  key={step.id}
+                <Pressable
+                  key={item.id}
+                  onPress={() => setNewStepCategory(item.id)}
                   style={[
-                    styles.node,
+                    styles.categoryChip,
                     {
-                      left: pos.x,
-                      top: pos.y,
+                      backgroundColor: active ? item.bg : 'rgba(255,248,238,0.06)',
+                      borderColor: active ? `${item.color}88` : BORDER,
                     },
-                    done && styles.nodeDone,
-                    active && styles.nodeActive,
                   ]}
                 >
                   <Text
                     style={[
-                      styles.nodeText,
-                      done && styles.nodeTextDone,
-                      active && styles.nodeTextActive,
+                      styles.categoryChipText,
+                      { color: active ? item.color : TEXT },
                     ]}
                   >
-                    {index + 1}
+                    {item.label}
                   </Text>
-                </View>
-              );
-            })}
-
-            {positions.slice(0, -1).map((pos, index) => {
-              const next = positions[index + 1];
-              return (
-                <View
-                  key={`line_${index}`}
-                  style={buildLineStyle(pos.x + 11, pos.y + 11, next.x + 11, next.y + 11)}
-                />
+                </Pressable>
               );
             })}
           </View>
+
+          <Pressable onPress={handleAddManualStep} style={styles.primaryBtn}>
+            <Text style={styles.primaryBtnText}>Step hinzufügen</Text>
+          </Pressable>
         </View>
 
-        <View style={styles.stepsCard}>
-          <Text style={styles.sectionTitle}>Schritte</Text>
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>Eigene kleine Steps</Text>
 
-          {selectedSteps.map((step, index) => {
-            const p = progressForStep(step, stepState, selectedPlan.id);
-            const isLocked = index > currentIndex;
-            const isActive = index === currentIndex;
+          {!manualSteps.length ? (
+            <Text style={styles.emptyText}>
+              Noch keine eigenen Steps. Lege oben deine ersten kleinen Schritte an.
+            </Text>
+          ) : (
+            manualSteps.map((step) => (
+              <ManualStepRow
+                key={step.id}
+                step={step}
+                onToggle={() => handleToggleManualStep(step.id)}
+                onDelete={() => handleDeleteManualStep(step.id)}
+              />
+            ))
+          )}
+        </View>
 
-            return (
+        {!!aiSteps.length && (
+          <View style={styles.card}>
+            <Text style={styles.cardTitle}>KI-Plan</Text>
+            <Text style={styles.smallMuted}>
+              Der KI-Plan bleibt als strukturierte Liste erhalten. Kein Grafikpfad mehr.
+            </Text>
+
+            {aiSteps.map((step, index) => (
               <View
                 key={step.id}
-                style={[
-                  styles.stepCard,
-                  isActive && styles.stepCardActive,
-                  p.complete && styles.stepCardDone,
-                ]}
+                style={[styles.aiStepCard, isAiStepComplete(step) && styles.aiStepCardDone]}
               >
-                <View style={styles.stepHeader}>
-                  <Text style={styles.stepHeaderTitle}>
-                    STEP {String(index + 1).padStart(2, '0')}
+                <View style={styles.aiStepTop}>
+                  <Text style={styles.aiStepIndex}>
+                    PHASE {String(index + 1).padStart(2, '0')}
                   </Text>
-                  <Text style={styles.stepHeaderState}>
-                    {p.complete ? 'Erledigt' : isLocked ? 'Gesperrt' : 'Aktuell'}
+                  <Text style={styles.aiStepState}>
+                    {isAiStepComplete(step) ? 'Erledigt' : 'Aktiv'}
                   </Text>
                 </View>
 
-                <Text style={styles.stepTitle}>{step.title}</Text>
-                <Text style={styles.stepText}>{step.explanation}</Text>
+                <Text style={styles.aiStepTitle}>{step.title}</Text>
+                <Text style={styles.aiStepText}>{step.explanation}</Text>
 
-                <View style={{ marginTop: 12, gap: 10 }}>
-                  {step.checklist.map((item) => {
-                    const checked = getItemChecked(
-                      stepState,
-                      selectedPlan.id,
-                      step.id,
-                      item.id,
-                      item.done ?? false,
-                    );
-
-                    return (
-                      <Pressable
-                        key={item.id}
-                        disabled={isLocked}
-                        onPress={() => toggleChecklist(selectedPlan.id, step.id, item.id)}
-                        style={[
-                          styles.checkItem,
-                          checked && styles.checkItemDone,
-                          isLocked && styles.checkItemLocked,
-                        ]}
-                      >
-                        <View style={[styles.checkCircle, checked && styles.checkCircleDone]}>
-                          {checked ? <Text style={styles.checkMark}>✓</Text> : null}
-                        </View>
-                        <Text style={[styles.checkText, checked && styles.checkTextDone]}>
-                          {item.label}
-                        </Text>
-                      </Pressable>
-                    );
-                  })}
+                <View style={styles.aiChecklistWrap}>
+                  {(step.checklist ?? []).map((item) => (
+                    <AiChecklistRow
+                      key={item.id}
+                      item={item}
+                      onToggle={() => handleToggleAiChecklist(step.id, item.id)}
+                    />
+                  ))}
                 </View>
               </View>
-            );
-          })}
-        </View>
+            ))}
+          </View>
+        )}
       </ScrollView>
     </SafeAreaView>
   );
@@ -339,53 +802,128 @@ const styles = StyleSheet.create({
     backgroundColor: BG,
   },
   content: {
-    paddingTop: 20,
-    paddingHorizontal: 18,
+    padding: 18,
     paddingBottom: 120,
     gap: 16,
   },
   hero: {
-    backgroundColor: BG_DARK,
+    backgroundColor: BG_SOFT,
     borderRadius: 24,
     padding: 18,
     borderWidth: 1,
     borderColor: BORDER,
   },
-  heroTitle: {
+  heroTopMeta: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  heroPercent: {
+    color: GOLD,
+    fontSize: 22,
+    fontWeight: '900',
+  },
+  kicker: {
+    color: GOLD,
+    fontSize: 12,
+    fontWeight: '900',
+    letterSpacing: 1.2,
+    textTransform: 'uppercase',
+  },
+  title: {
     color: TEXT,
     fontSize: 28,
     fontWeight: '900',
-    marginTop: 6,
+    marginTop: 8,
   },
-  heroSubtitle: {
+  subtitle: {
     color: MUTED,
     fontSize: 14,
     lineHeight: 22,
-    marginTop: 8,
+    marginTop: 10,
   },
-  backButton: {
-    alignSelf: 'flex-start',
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 999,
-    backgroundColor: 'rgba(255,255,255,0.08)',
-  },
-  backButtonText: {
-    color: TEXT,
-    fontWeight: '800',
-    fontSize: 13,
-  },
-  listCard: {
+  card: {
     backgroundColor: CARD,
-    borderRadius: 22,
+    borderRadius: 24,
     padding: 16,
     borderWidth: 1,
     borderColor: BORDER,
   },
-  sectionTitle: {
-    color: GOLD,
+  cardTitle: {
+    color: TEXT,
     fontSize: 18,
     fontWeight: '900',
+  },
+  label: {
+    color: GOLD,
+    fontSize: 12,
+    fontWeight: '900',
+    marginTop: 14,
+    marginBottom: 8,
+    letterSpacing: 1,
+    textTransform: 'uppercase',
+  },
+  input: {
+    backgroundColor: 'rgba(255,248,238,0.06)',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: BORDER,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    color: TEXT,
+    fontSize: 15,
+    lineHeight: 22,
+  },
+  chipWrap: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  categoryChip: {
+    borderRadius: 999,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderWidth: 1,
+  },
+  categoryChipText: {
+    fontWeight: '800',
+    fontSize: 13,
+  },
+  primaryBtn: {
+    marginTop: 16,
+    borderRadius: 16,
+    backgroundColor: GOLD,
+    paddingVertical: 14,
+    alignItems: 'center',
+  },
+  primaryBtnText: {
+    color: '#1A120D',
+    fontWeight: '900',
+    fontSize: 15,
+  },
+  secondaryBtn: {
+    flex: 1,
+    borderRadius: 14,
+    backgroundColor: 'rgba(255,248,238,0.08)',
+    paddingVertical: 12,
+    alignItems: 'center',
+  },
+  secondaryBtnText: {
+    color: TEXT,
+    fontWeight: '800',
+    fontSize: 14,
+  },
+  deleteBtn: {
+    borderRadius: 14,
+    backgroundColor: 'rgba(255,143,143,0.14)',
+    paddingHorizontal: 18,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  deleteBtnText: {
+    color: RED,
+    fontWeight: '800',
+    fontSize: 14,
   },
   emptyText: {
     color: MUTED,
@@ -393,194 +931,250 @@ const styles = StyleSheet.create({
     lineHeight: 22,
     marginTop: 12,
   },
+  smallMuted: {
+    color: MUTED,
+    fontSize: 13,
+    lineHeight: 20,
+    marginTop: 8,
+  },
   goalCard: {
-    marginTop: 12,
-    backgroundColor: CARD_DARK,
-    borderRadius: 18,
+    marginTop: 14,
+    borderRadius: 20,
+    backgroundColor: CARD_LIGHT,
     padding: 14,
     borderWidth: 1,
     borderColor: BORDER,
+  },
+  goalTopRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  goalTopMetaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  goalTinyMeta: {
+    color: MUTED,
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  goalTypeBadge: {
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderWidth: 1,
+    alignSelf: 'flex-start',
+  },
+  goalTypeBadgeText: {
+    fontSize: 11,
+    fontWeight: '900',
   },
   goalTitle: {
     color: TEXT,
     fontSize: 17,
     fontWeight: '900',
+    marginTop: 8,
   },
   goalMeta: {
     color: MUTED,
-    fontSize: 13,
-    marginTop: 6,
+    fontSize: 12,
+    marginTop: 4,
   },
-  mountainCard: {
-    backgroundColor: CARD,
-    borderRadius: 22,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: BORDER,
-  },
-  mountainStage: {
-    marginTop: 16,
-    height: 300,
-    position: 'relative',
-    overflow: 'hidden',
-    borderRadius: 18,
-    backgroundColor: '#E8E8E8',
-  },
-  mountainLeft: {
-    position: 'absolute',
-    left: 35,
-    bottom: 0,
-    width: 0,
-    height: 0,
-    borderLeftWidth: 140,
-    borderRightWidth: 70,
-    borderBottomWidth: 235,
-    borderLeftColor: 'transparent',
-    borderRightColor: 'transparent',
-    borderBottomColor: '#4D4D4D',
-  },
-  mountainRight: {
-    position: 'absolute',
-    left: 145,
-    bottom: 0,
-    width: 0,
-    height: 0,
-    borderLeftWidth: 55,
-    borderRightWidth: 150,
-    borderBottomWidth: 235,
-    borderLeftColor: 'transparent',
-    borderRightColor: 'transparent',
-    borderBottomColor: '#6A6A6A',
-  },
-  flag: {
-    position: 'absolute',
-    top: 20,
-    left: 186,
-    fontSize: 24,
-  },
-  node: {
-    position: 'absolute',
-    width: 22,
-    height: 22,
-    borderRadius: 999,
-    backgroundColor: '#FFFFFF',
-    borderWidth: 2,
-    borderColor: '#D66',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  nodeDone: {
-    backgroundColor: SUCCESS,
-    borderColor: SUCCESS,
-  },
-  nodeActive: {
-    backgroundColor: GOLD,
-    borderColor: GOLD,
-    transform: [{ scale: 1.1 }],
-  },
-  nodeText: {
-    fontSize: 10,
+  goalPercent: {
+    color: GOLD,
+    fontSize: 20,
     fontWeight: '900',
-    color: '#B44',
   },
-  nodeTextDone: {
-    color: '#163223',
+  goalActionRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 10,
+    marginBottom: 4,
   },
-  nodeTextActive: {
-    color: '#13213F',
+  progressTrack: {
+    height: 10,
+    borderRadius: 999,
+    backgroundColor: 'rgba(255,248,238,0.12)',
+    overflow: 'hidden',
+    marginTop: 12,
   },
-  stepsCard: {
-    backgroundColor: CARD,
-    borderRadius: 22,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: BORDER,
+  progressFill: {
+    height: '100%',
+    borderRadius: 999,
+    backgroundColor: GREEN,
   },
-  stepCard: {
-    marginTop: 14,
-    backgroundColor: CARD_DARK,
+  backBtn: {
+    alignSelf: 'flex-start',
+    backgroundColor: 'rgba(255,248,238,0.08)',
+    borderRadius: 999,
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+  },
+  backBtnText: {
+    color: TEXT,
+    fontWeight: '800',
+    fontSize: 13,
+  },
+  stepRowWrap: {
+    marginTop: 12,
+    flexDirection: 'row',
+    alignItems: 'stretch',
+    gap: 8,
+  },
+  stepAccent: {
+    width: 6,
+    borderRadius: 999,
+  },
+  stepRow: {
+    flex: 1,
     borderRadius: 18,
+    backgroundColor: CARD_DARK,
     padding: 14,
     borderWidth: 1,
     borderColor: BORDER,
-  },
-  stepCardActive: {
-    borderColor: 'rgba(212,175,55,0.40)',
-    backgroundColor: 'rgba(212,175,55,0.08)',
-  },
-  stepCardDone: {
-    borderColor: 'rgba(124,224,163,0.30)',
-    backgroundColor: 'rgba(124,224,163,0.06)',
-  },
-  stepHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    gap: 10,
-  },
-  stepHeaderTitle: {
-    color: GOLD,
-    fontWeight: '900',
-    fontSize: 12,
-  },
-  stepHeaderState: {
-    color: MUTED,
-    fontWeight: '800',
-    fontSize: 12,
-  },
-  stepTitle: {
-    color: TEXT,
-    fontWeight: '900',
-    fontSize: 17,
-    marginTop: 6,
-  },
-  stepText: {
-    color: MUTED,
-    fontSize: 14,
-    lineHeight: 21,
-    marginTop: 8,
-  },
-  checkItem: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
-    backgroundColor: 'rgba(255,255,255,0.06)',
-    borderRadius: 14,
-    padding: 12,
+  },
+  stepRowDone: {
+    backgroundColor: 'rgba(126,219,122,0.10)',
+    borderColor: 'rgba(126,219,122,0.18)',
+  },
+  stepMain: {
+    flex: 1,
+  },
+  stepTopLine: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  stepCategoryBadge: {
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
     borderWidth: 1,
-    borderColor: BORDER,
   },
-  checkItemDone: {
-    backgroundColor: 'rgba(124,224,163,0.10)',
-    borderColor: 'rgba(124,224,163,0.22)',
+  stepCategoryText: {
+    fontSize: 11,
+    fontWeight: '900',
   },
-  checkItemLocked: {
-    opacity: 0.5,
+  stepStateText: {
+    color: MUTED,
+    fontSize: 11,
+    fontWeight: '800',
+  },
+  stepTitle: {
+    color: TEXT,
+    fontSize: 15,
+    fontWeight: '900',
+    marginTop: 8,
+  },
+  stepTitleDone: {
+    color: GREEN,
+  },
+  stepNote: {
+    color: MUTED,
+    fontSize: 13,
+    lineHeight: 19,
+    marginTop: 6,
+  },
+  stepNoteDone: {
+    color: 'rgba(126,219,122,0.82)',
+  },
+  deleteMiniBtn: {
+    borderRadius: 14,
+    backgroundColor: 'rgba(255,143,143,0.14)',
+    paddingHorizontal: 12,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  deleteMiniBtnText: {
+    color: RED,
+    fontWeight: '800',
+    fontSize: 12,
   },
   checkCircle: {
     width: 24,
     height: 24,
     borderRadius: 999,
     borderWidth: 2,
-    borderColor: 'rgba(255,255,255,0.30)',
+    borderColor: 'rgba(255,248,238,0.28)',
     alignItems: 'center',
     justifyContent: 'center',
   },
   checkCircleDone: {
-    backgroundColor: SUCCESS,
-    borderColor: SUCCESS,
+    backgroundColor: GREEN,
+    borderColor: GREEN,
   },
   checkMark: {
-    color: '#163223',
+    color: '#183117',
     fontWeight: '900',
   },
-  checkText: {
+  aiStepCard: {
+    marginTop: 12,
+    borderRadius: 18,
+    padding: 14,
+    backgroundColor: CARD_DARK,
+    borderWidth: 1,
+    borderColor: BORDER,
+  },
+  aiStepCardDone: {
+    borderColor: 'rgba(126,219,122,0.20)',
+    backgroundColor: 'rgba(126,219,122,0.08)',
+  },
+  aiStepTop: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  aiStepIndex: {
+    color: GOLD,
+    fontSize: 12,
+    fontWeight: '900',
+  },
+  aiStepState: {
+    color: MUTED,
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  aiStepTitle: {
+    color: TEXT,
+    fontSize: 16,
+    fontWeight: '900',
+    marginTop: 8,
+  },
+  aiStepText: {
+    color: MUTED,
+    fontSize: 14,
+    lineHeight: 21,
+    marginTop: 8,
+  },
+  aiChecklistWrap: {
+    gap: 10,
+    marginTop: 14,
+  },
+  aiCheckRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    borderRadius: 14,
+    padding: 12,
+    backgroundColor: 'rgba(255,248,238,0.06)',
+    borderWidth: 1,
+    borderColor: BORDER,
+  },
+  aiCheckRowDone: {
+    backgroundColor: 'rgba(126,219,122,0.12)',
+    borderColor: 'rgba(126,219,122,0.20)',
+  },
+  aiCheckText: {
+    flex: 1,
     color: TEXT,
     fontSize: 14,
-    flex: 1,
     lineHeight: 20,
   },
-  checkTextDone: {
-    color: SUCCESS,
+  aiCheckTextDone: {
+    color: GREEN,
     fontWeight: '800',
   },
 });

@@ -381,7 +381,7 @@ function buildHabits(
         details: 'Feste Trainingstage durchziehen. Der Rhythmus ist wichtiger als Perfektion.',
         frequencyPerWeek: Math.max(3, Math.min(daysPerWeek, intensity === 'extreme' ? 5 : 4)),
         durationMinutes: Math.min(Math.max(trainingMinutes, 25), Math.max(minutesPerDay, trainingMinutes)),
-        difficulty: intensity === 'gentle' ? 'light' : 'medium',
+        difficulty: 'medium',
         cadence: 'selected_days',
         weekdays,
         categoryLabel: 'Training',
@@ -394,7 +394,7 @@ function buildHabits(
         details: 'Bei den Hauptmahlzeiten bewusst auf Eiweiß achten, nicht nur nebenbei.',
         frequencyPerWeek: 7,
         durationMinutes: 0,
-        difficulty: 'light',
+        difficulty: 'easy',
         cadence: 'daily',
         categoryLabel: 'Ernährung',
       },
@@ -406,7 +406,7 @@ function buildHabits(
         details: 'Kurz prüfen: War der Tag eher zielnah oder ungeplant?',
         frequencyPerWeek: 7,
         durationMinutes: 5,
-        difficulty: 'light',
+        difficulty: 'easy',
         cadence: 'daily',
         categoryLabel: 'Kontrolle',
       },
@@ -418,7 +418,7 @@ function buildHabits(
         details: 'Einmal pro Woche Gewicht, Einheiten und Essverhalten prüfen.',
         frequencyPerWeek: 1,
         durationMinutes: 15,
-        difficulty: 'light',
+        difficulty: 'easy',
         cadence: 'weekly',
         weekdays: [7],
         categoryLabel: 'Review',
@@ -435,7 +435,7 @@ function buildHabits(
       details: 'Kurzer erster Schritt an deinen festen Tagen.',
       frequencyPerWeek: daysPerWeek,
       durationMinutes: Math.min(10, minutesPerDay),
-      difficulty: 'light',
+      difficulty: 'easy',
       cadence: 'selected_days',
       weekdays,
       categoryLabel: 'Start',
@@ -461,7 +461,7 @@ function buildHabits(
       details: 'Kurz prüfen, was gut lief und was konkret angepasst werden muss.',
       frequencyPerWeek: 1,
       durationMinutes: 15,
-      difficulty: 'light',
+      difficulty: 'easy',
       cadence: 'weekly',
       weekdays: [7],
       categoryLabel: 'Review',
@@ -636,10 +636,11 @@ function buildRecommendation(
         'Setze heute konkrete Trainingstage und lege 3 Essensregeln fest, die du wirklich halten kannst.',
       nextStep:
         'Zieh die Woche sauber durch und prüfe danach: Training erledigt, Ernährung kontrollierter, Fortschritt sichtbar?',
-      warning:
+      warnings: [
         obstacles.includes('overwhelm')
           ? 'Starte nicht zu hart. Konstanz schlägt Übermotivation.'
           : 'Ein einzelner perfekter Tag bringt wenig. Entscheidend ist deine Wochenkonstanz.',
+      ],
     };
   }
 
@@ -649,8 +650,9 @@ function buildRecommendation(
       `Der Plan fokussiert sich darauf, dass du regelmäßig sichtbar an "${outcome}" arbeitest, ohne dich zu überfordern.`,
     todayFocus: 'Lege heute deinen ersten festen Block fest und starte mit einer klaren Aufgabe.',
     nextStep: 'Zieh den Plan 7 Tage ehrlich durch und passe erst dann Details an.',
-    warning:
+    warnings: [
       `Dein Hauptgegner ist aktuell ${obstacles.map(mapObstacleLabel).join(', ') || 'Unklarheit'}. Der Plan hält die Schritte deshalb bewusst klar.`,
+    ],
   };
 }
 
@@ -686,6 +688,7 @@ function buildDiagnostic(
   const confidenceBase = Math.max(40, 85 - obstacles.length * 8);
 
   return {
+    summary: `Von "${currentLevel || 'Anfang'}" in Richtung "${outcome}" mit einem klaren Wochenrhythmus.`,
     currentLevelLabel: currentLevel || 'Startpunkt noch unklar',
     targetLevelLabel: outcome,
     strengths: [
@@ -700,7 +703,9 @@ function buildDiagnostic(
         : ['Umsetzung könnte zu unklar bleiben'],
     realismScore: Math.max(40, Math.min(95, realismBase)),
     confidenceScore: Math.max(35, Math.min(90, confidenceBase)),
+    estimatedWeeks: weeks,
     estimatedDifficulty,
+    difficulty: estimatedDifficulty,
     whyThisGoalMatters: why,
   };
 }
@@ -722,6 +727,7 @@ function buildExecutionPlan(
   obstacles: string[],
 ): GoalExecutionPlan {
   return {
+    summary: `Praktischer Umsetzungsplan für ${category === 'fitness' ? 'dein Fitnessziel' : 'dein Ziel'} mit festen Routinen und klaren Startschritten.`,
     intensityPreset,
     habits: buildHabits(category, intensityPreset, minutesPerDay, daysPerWeek),
     todos: buildTodos(category, obstacles),
@@ -760,8 +766,12 @@ export function buildGoalFromAnswers({
   const deadlineRaw = asString(answers.deadline);
   const targetDate = resolveTargetDate(deadlineRaw, title, outcome);
 
-  const daysPerWeek = asNumber(answers.days_per_week, 4);
-  const minutesPerDay = asNumber(answers.minutes_per_day, profile?.preferredSessionMinutes ?? 30);
+  const rawDaysPerWeek = asNumber(answers.days_per_week, 4);
+  const rawMinutesPerDay = asNumber(answers.minutes_per_day, profile?.preferredSessionMinutes ?? 30);
+
+  const daysPerWeek = Math.max(2, Math.min(7, rawDaysPerWeek));
+  const minutesPerDay = Math.max(10, Math.min(180, rawMinutesPerDay));
+
   const bestTime = (asString(answers.best_time, profile?.energyWindow ?? 'mixed') ||
     'mixed') as GoalConstraintProfile['preferredTime'];
   const obstacles = asMulti(answers.obstacles);
@@ -769,45 +779,56 @@ export function buildGoalFromAnswers({
   const intensityPreset = detectIntensity(planStyle);
 
   const constraints: GoalConstraintProfile = {
-    availableDaysPerWeek: Math.max(2, Math.min(7, daysPerWeek)),
-    minutesPerDay: Math.max(10, Math.min(180, minutesPerDay)),
+    availableDaysPerWeek: daysPerWeek,
+    minutesPerDay,
     preferredTime: bestTime,
     intensity: clampIntensity(
-      intensityPreset === 'gentle' ? 2 :
-      intensityPreset === 'balanced' ? 3 :
-      intensityPreset === 'ambitious' ? 4 : 5,
+      intensityPreset === 'gentle'
+        ? 2
+        : intensityPreset === 'balanced'
+          ? 3
+          : intensityPreset === 'ambitious'
+            ? 4
+            : 5,
     ),
     learningSpeed: mapLearningSpeed(profile),
     stressTolerance: mapStressTolerance(obstacles),
   };
 
+  const safeDaysPerWeek = constraints.availableDaysPerWeek ?? daysPerWeek;
+  const safeMinutesPerDay = constraints.minutesPerDay ?? minutesPerDay;
+
   const requirements = buildRequirements(
-    constraints.availableDaysPerWeek,
-    constraints.minutesPerDay,
+    safeDaysPerWeek,
+    safeMinutesPerDay,
     targetDate,
     now,
   );
+
+  const safeEstimatedWeeksNeeded = requirements.estimatedWeeksNeeded ?? 8;
+  const safeRequiredMinutesPerWeek = requirements.requiredMinutesPerWeek ?? (safeDaysPerWeek * safeMinutesPerDay);
 
   const diagnostic = buildDiagnostic(
     currentLevel,
     outcome,
     why,
     obstacles,
-    requirements.estimatedWeeksNeeded,
-    requirements.requiredMinutesPerWeek,
+    safeEstimatedWeeksNeeded,
+    safeRequiredMinutesPerWeek,
   );
 
   const executionPlan = buildExecutionPlan(
     category,
     intensityPreset,
-    constraints.minutesPerDay,
-    constraints.availableDaysPerWeek,
+    safeMinutesPerDay,
+    safeDaysPerWeek,
     constraints.preferredTime,
     obstacles,
   );
 
-  const habits = executionPlan.habits.filter((habit) => {
-    if (category === 'fitness' && habit.shortTitle === 'Eiweiß' && habit.durationMinutes > 10) {
+  const habits = (executionPlan.habits ?? []).filter((habit) => {
+    const habitDuration = habit.durationMinutes ?? 0;
+    if (category === 'fitness' && habit.shortTitle === 'Eiweiß' && habitDuration > 10) {
       return false;
     }
     return true;
@@ -827,12 +848,26 @@ export function buildGoalFromAnswers({
     id: uid('goal'),
     title: title.trim(),
     category,
-    status: 'active',
-    createdAt: now,
-    startDate: now,
+    difficultyLevel:
+      intensityPreset === 'gentle'
+        ? 3
+        : intensityPreset === 'balanced'
+          ? 5
+          : intensityPreset === 'ambitious'
+            ? 7
+            : 9,
     targetDate,
-    targetOutcome: outcome,
+    createdAt: now,
     why,
+    answers,
+    recommendation,
+    miniSteps,
+    executionPlan,
+    progressPercent: 0,
+
+    status: 'active',
+    startDate: now,
+    targetOutcome: outcome,
     notes: asString(answers.success_picture) || asString(answers.past_problem) || '',
     userReportedProgress: 0,
     metrics: buildMetrics(category),
@@ -840,19 +875,18 @@ export function buildGoalFromAnswers({
     constraints,
     diagnostic,
     requirements,
-    recommendation,
-    executionPlan,
     intensityPreset,
     currentSituation: currentLevel,
     successVision: asString(answers.success_picture, outcome),
     mainObstacle: obstacles.map(mapObstacleLabel).join(', '),
-    availableDaysLabel: `${constraints.availableDaysPerWeek} Tage pro Woche`,
+    availableDaysLabel: `${safeDaysPerWeek} Tage pro Woche`,
     preferredPlanStyle:
       planStyle === 'small_steps' || planStyle === 'flexible' || planStyle === 'push'
         ? planStyle
         : 'structured',
-    miniSteps,
     reviewPrompts,
     lastGeneratedFromAnswers: answers,
+    availableDaysPerWeek: safeDaysPerWeek,
+    appliedToApp: false,
   };
 }
