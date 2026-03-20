@@ -1,29 +1,25 @@
 import React from 'react';
 import { Tabs } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
+import { useAppTheme } from '@/src/theme/ThemeProvider';
 
 export default function TabLayout() {
+  const { colors } = useAppTheme();
+
   return (
     <Tabs
       screenOptions={{
         headerShown: false,
-        tabBarActiveTintColor: '#D4AF37',
-        tabBarInactiveTintColor: 'rgba(255,255,255,0.55)',
         tabBarStyle: {
-          backgroundColor: '#0F2454',
-          borderTopWidth: 1,
-          borderTopColor: 'rgba(212,175,55,0.18)',
-          height: 74,
-          paddingBottom: 14,
+          backgroundColor: colors.tabBar,
+          borderTopColor: colors.border,
+          height: 84,
           paddingTop: 8,
-          shadowColor: '#000',
-          shadowOpacity: 0.25,
-          shadowRadius: 12,
-          shadowOffset: { width: 0, height: -6 },
-          elevation: 12,
         },
+        tabBarActiveTintColor: colors.tabIconSelected,
+        tabBarInactiveTintColor: colors.tabIconDefault,
         tabBarLabelStyle: {
-          fontSize: 12,
+          fontSize: 11,
           fontWeight: '700',
         },
       }}
@@ -33,7 +29,7 @@ export default function TabLayout() {
         options={{
           title: 'Kalender',
           tabBarIcon: ({ color, size }) => (
-            <Ionicons name="calendar" size={size} color={color} />
+            <Ionicons name="calendar-outline" size={size} color={color} />
           ),
         }}
       />
@@ -41,29 +37,9 @@ export default function TabLayout() {
       <Tabs.Screen
         name="todo"
         options={{
-          title: 'To-Do',
+          title: 'ToDos',
           tabBarIcon: ({ color, size }) => (
-            <Ionicons name="checkmark-circle" size={size} color={color} />
-          ),
-        }}
-      />
-
-      <Tabs.Screen
-        name="psyche"
-        options={{
-          title: 'Psyche',
-          tabBarIcon: ({ color, size }) => (
-            <Ionicons name="heart" size={size} color={color} />
-          ),
-        }}
-      />
-
-      <Tabs.Screen
-        name="progress"
-        options={{
-          title: 'Fortschritt',
-          tabBarIcon: ({ color, size }) => (
-            <Ionicons name="bar-chart" size={size} color={color} />
+            <Ionicons name="checkbox-outline" size={size} color={color} />
           ),
         }}
       />
@@ -73,7 +49,37 @@ export default function TabLayout() {
         options={{
           title: 'Habits',
           tabBarIcon: ({ color, size }) => (
-            <Ionicons name="flame" size={size} color={color} />
+            <Ionicons name="repeat-outline" size={size} color={color} />
+          ),
+        }}
+      />
+
+      <Tabs.Screen
+        name="progress"
+        options={{
+          title: 'Fortschritt',
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name="stats-chart-outline" size={size} color={color} />
+          ),
+        }}
+      />
+
+      <Tabs.Screen
+        name="psyche"
+        options={{
+          title: 'Psyche',
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name="sparkles-outline" size={size} color={color} />
+          ),
+        }}
+      />
+
+      <Tabs.Screen
+        name="settings"
+        options={{
+          title: 'Einstellungen',
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name="settings-outline" size={size} color={color} />
           ),
         }}
       />

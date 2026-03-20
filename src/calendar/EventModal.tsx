@@ -13,7 +13,7 @@ import DateTimePicker from '@react-native-community/datetimepicker';
 import dayjs from 'dayjs';
 
 import { CalEvent } from './types';
-import { ACCENT_GOLD, EVENT_COLORS, THEME } from './colors';
+import { useAppTheme } from '../theme/ThemeProvider';
 
 type Props = {
   visible: boolean;
@@ -59,6 +59,9 @@ export default function EventModal({
   defaultDate,
   initialEvent,
 }: Props) {
+  const { colors, fontFamily, eventPalette } = useAppTheme();
+  const styles = useMemo(() => createStyles(colors, fontFamily), [colors, fontFamily]);
+
   const isEditing = !!initialEvent;
 
   const defaultStart = useMemo(() => {
@@ -74,7 +77,7 @@ export default function EventModal({
   const [title, setTitle] = useState('');
   const [location, setLocation] = useState('');
   const [description, setDescription] = useState('');
-  const [color, setColor] = useState(EVENT_COLORS[0] ?? ACCENT_GOLD);
+  const [color, setColor] = useState(eventPalette[0] ?? colors.primary);
 
   const [dateValue, setDateValue] = useState<Date>(defaultStart);
   const [startTime, setStartTime] = useState<Date>(defaultStart);
@@ -91,12 +94,12 @@ export default function EventModal({
     setTitle(initialEvent?.title ?? '');
     setLocation(initialEvent?.location ?? '');
     setDescription(initialEvent?.description ?? '');
-    setColor(initialEvent?.color ?? EVENT_COLORS[0] ?? ACCENT_GOLD);
+    setColor(initialEvent?.color ?? eventPalette[0] ?? colors.primary);
     setDateValue(nextStart);
     setStartTime(nextStart);
     setEndTime(nextEnd);
     setPickerKind(null);
-  }, [visible, initialEvent, defaultDate]);
+  }, [visible, initialEvent, defaultDate, colors.primary]);
 
   function submit() {
     const trimmedTitle = title.trim();
@@ -175,7 +178,7 @@ export default function EventModal({
             value={title}
             onChangeText={setTitle}
             placeholder="Titel"
-            placeholderTextColor="rgba(255,255,255,0.35)"
+            placeholderTextColor={colors.textMuted}
             style={styles.input}
           />
 
@@ -183,7 +186,7 @@ export default function EventModal({
             value={description}
             onChangeText={setDescription}
             placeholder="Beschreibung"
-            placeholderTextColor="rgba(255,255,255,0.35)"
+            placeholderTextColor={colors.textMuted}
             style={[styles.input, styles.textarea]}
             multiline
           />
@@ -192,7 +195,7 @@ export default function EventModal({
             value={location}
             onChangeText={setLocation}
             placeholder="Ort"
-            placeholderTextColor="rgba(255,255,255,0.35)"
+            placeholderTextColor={colors.textMuted}
             style={styles.input}
           />
 
@@ -217,7 +220,7 @@ export default function EventModal({
 
           <Text style={styles.label}>Farbe</Text>
           <View style={styles.colorRow}>
-            {EVENT_COLORS.map((item) => {
+            {eventPalette.map((item) => {
               const active = item === color;
 
               return (
@@ -277,139 +280,152 @@ export default function EventModal({
   );
 }
 
-const styles = StyleSheet.create({
-  backdrop: {
-    flex: 1,
-    backgroundColor: 'rgba(7,10,18,0.55)',
-    justifyContent: 'flex-end',
-  },
-  sheet: {
-    backgroundColor: THEME.bgDark,
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    padding: 18,
-    borderTopWidth: 1,
-    borderColor: THEME.border,
-  },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 14,
-    gap: 12,
-  },
-  title: {
-    color: THEME.text,
-    fontSize: 22,
-    fontWeight: '900',
-  },
-  closeBtn: {
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    borderRadius: 12,
-    backgroundColor: 'rgba(255,255,255,0.08)',
-  },
-  closeBtnText: {
-    color: THEME.text,
-    fontWeight: '800',
-  },
-  input: {
-    backgroundColor: 'rgba(255,255,255,0.08)',
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: THEME.border,
-    color: THEME.text,
-    paddingHorizontal: 14,
-    paddingVertical: 13,
-    fontSize: 15,
-    marginBottom: 12,
-  },
-  textarea: {
-    minHeight: 88,
-    textAlignVertical: 'top',
-  },
-  label: {
-    color: THEME.muted,
-    fontWeight: '900',
-    marginBottom: 8,
-    marginTop: 4,
-  },
-  timeGrid: {
-    flexDirection: 'row',
-    gap: 10,
-    marginBottom: 12,
-  },
-  timeCard: {
-    flex: 1,
-    backgroundColor: 'rgba(255,255,255,0.08)',
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: THEME.border,
-    padding: 12,
-  },
-  timeCardLabel: {
-    color: THEME.muted,
-    fontSize: 12,
-    fontWeight: '800',
-  },
-  timeCardValue: {
-    color: THEME.text,
-    fontSize: 15,
-    fontWeight: '900',
-    marginTop: 4,
-  },
-  colorRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 12,
-    marginBottom: 12,
-  },
-  colorDot: {
-    width: 28,
-    height: 28,
-    borderRadius: 999,
-  },
-  colorDotActive: {
-    borderWidth: 3,
-    borderColor: '#FFFFFF',
-  },
-  pickerWrap: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 12,
-    backgroundColor: 'rgba(255,255,255,0.06)',
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: THEME.border,
-    overflow: 'hidden',
-  },
-  actions: {
-    flexDirection: 'row',
-    gap: 12,
-    marginTop: 8,
-  },
-  deleteBtn: {
-    flex: 1,
-    borderRadius: 14,
-    paddingVertical: 14,
-    alignItems: 'center',
-    backgroundColor: 'rgba(255,90,90,0.12)',
-    borderWidth: 1,
-    borderColor: 'rgba(255,90,90,0.25)',
-  },
-  deleteBtnText: {
-    color: '#ff9b9b',
-    fontWeight: '900',
-  },
-  saveBtn: {
-    flex: 1,
-    borderRadius: 14,
-    paddingVertical: 14,
-    alignItems: 'center',
-    backgroundColor: ACCENT_GOLD,
-  },
-  saveBtnText: {
-    color: '#0B1636',
-    fontWeight: '900',
-  },
-});
+function createStyles(
+  colors: ReturnType<typeof useAppTheme>['colors'],
+  fontFamily: ReturnType<typeof useAppTheme>['fontFamily']
+) {
+  return StyleSheet.create({
+    backdrop: {
+      flex: 1,
+      backgroundColor: 'rgba(7,10,18,0.55)',
+      justifyContent: 'flex-end',
+    },
+    sheet: {
+      backgroundColor: colors.backgroundSecondary,
+      borderTopLeftRadius: 24,
+      borderTopRightRadius: 24,
+      padding: 18,
+      borderTopWidth: 1,
+      borderColor: colors.border,
+    },
+    header: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      marginBottom: 14,
+      gap: 12,
+    },
+    title: {
+      color: colors.text,
+      fontSize: 22,
+      fontWeight: '900',
+      fontFamily: fontFamily.bold,
+    },
+    closeBtn: {
+      paddingHorizontal: 12,
+      paddingVertical: 10,
+      borderRadius: 12,
+      backgroundColor: colors.cardSecondary,
+    },
+    closeBtnText: {
+      color: colors.text,
+      fontWeight: '800',
+      fontFamily: fontFamily.bold,
+    },
+    input: {
+      backgroundColor: colors.cardSecondary,
+      borderRadius: 14,
+      borderWidth: 1,
+      borderColor: colors.border,
+      color: colors.text,
+      paddingHorizontal: 14,
+      paddingVertical: 13,
+      fontSize: 15,
+      marginBottom: 12,
+      fontFamily: fontFamily.regular,
+    },
+    textarea: {
+      minHeight: 88,
+      textAlignVertical: 'top',
+    },
+    label: {
+      color: colors.textMuted,
+      fontWeight: '900',
+      marginBottom: 8,
+      marginTop: 4,
+      fontFamily: fontFamily.bold,
+    },
+    timeGrid: {
+      flexDirection: 'row',
+      gap: 10,
+      marginBottom: 12,
+    },
+    timeCard: {
+      flex: 1,
+      backgroundColor: colors.cardSecondary,
+      borderRadius: 14,
+      borderWidth: 1,
+      borderColor: colors.border,
+      padding: 12,
+    },
+    timeCardLabel: {
+      color: colors.textMuted,
+      fontSize: 12,
+      fontWeight: '800',
+      fontFamily: fontFamily.bold,
+    },
+    timeCardValue: {
+      color: colors.text,
+      fontSize: 15,
+      fontWeight: '900',
+      marginTop: 4,
+      fontFamily: fontFamily.bold,
+    },
+    colorRow: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 12,
+      marginBottom: 12,
+    },
+    colorDot: {
+      width: 28,
+      height: 28,
+      borderRadius: 999,
+    },
+    colorDotActive: {
+      borderWidth: 3,
+      borderColor: colors.text,
+    },
+    pickerWrap: {
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginBottom: 12,
+      backgroundColor: colors.card,
+      borderRadius: 14,
+      borderWidth: 1,
+      borderColor: colors.border,
+      overflow: 'hidden',
+    },
+    actions: {
+      flexDirection: 'row',
+      gap: 12,
+      marginTop: 8,
+    },
+    deleteBtn: {
+      flex: 1,
+      borderRadius: 14,
+      paddingVertical: 14,
+      alignItems: 'center',
+      backgroundColor: colors.danger + '1F',
+      borderWidth: 1,
+      borderColor: colors.danger + '40',
+    },
+    deleteBtnText: {
+      color: colors.danger,
+      fontWeight: '900',
+      fontFamily: fontFamily.bold,
+    },
+    saveBtn: {
+      flex: 1,
+      borderRadius: 14,
+      paddingVertical: 14,
+      alignItems: 'center',
+      backgroundColor: colors.primary,
+    },
+    saveBtnText: {
+      color: colors.primaryText,
+      fontWeight: '900',
+      fontFamily: fontFamily.bold,
+    },
+  });
+}

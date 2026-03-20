@@ -12,7 +12,6 @@ import {
 import dayjs from 'dayjs';
 import 'dayjs/locale/de';
 
-import { GOLD, PSYCHE_THEME } from './styles';
 import {
   CalendarEventLike,
   GoalAnswerMap,
@@ -46,6 +45,7 @@ import { buildFreeSlots } from './buildFreeSlots';
 import { buildUserPlanningProfile } from './buildUserPlanningProfile';
 import { fetchGoalRefinement } from './refinementApi';
 import { fetchPlannerBundle } from './plannerApi';
+import { useAppTheme } from '../theme/ThemeProvider';
 
 dayjs.locale('de');
 
@@ -935,7 +935,13 @@ function buildApproxSignals(
   };
 }
 
-function GoalProgressBar({ value }: { value: number }) {
+function GoalProgressBar({
+  value,
+  styles,
+}: {
+  value: number;
+  styles: ReturnType<typeof createStyles>;
+}) {
   return (
     <View style={styles.progressTrack}>
       <View style={[styles.progressFill, { width: `${clamp(value, 0, 100)}%` }]} />
@@ -948,11 +954,15 @@ function QuestionInput({
   value,
   onChange,
   onToggle,
+  styles,
+  colors,
 }: {
   question: GoalQuestion;
   value: string | string[] | undefined;
   onChange: (next: string) => void;
   onToggle: (optionId: string) => void;
+  styles: ReturnType<typeof createStyles>;
+  colors: ReturnType<typeof useAppTheme>['colors'];
 }) {
   if (question.type === 'single_choice') {
     return (
@@ -1002,7 +1012,7 @@ function QuestionInput({
       value={answerToString(value)}
       onChangeText={onChange}
       placeholder={question.placeholder ?? 'Antwort eingeben'}
-      placeholderTextColor="rgba(255,255,255,0.35)"
+      placeholderTextColor={colors.textMuted}
       style={[
         styles.input,
         question.type === 'long_text' && { minHeight: 120, textAlignVertical: 'top' },
@@ -1012,6 +1022,9 @@ function QuestionInput({
 }
 
 export default function PsycheScreen() {
+  const { colors, fontFamily } = useAppTheme();
+  const styles = useMemo(() => createStyles(colors, fontFamily), [colors, fontFamily]);
+
   const [settings, setSettings] = useState<PsycheSettings>(DEFAULT_SETTINGS);
   const [goals, setGoals] = useState<PsycheGoal[]>([]);
   const [loading, setLoading] = useState(true);
@@ -1396,7 +1409,7 @@ export default function PsycheScreen() {
               value={goalTitle}
               onChangeText={setGoalTitle}
               placeholder="z. B. 12 kg Fett verlieren / Doktorarbeit in Biochemie fertigstellen / Unternehmen aufbauen"
-              placeholderTextColor="rgba(255,255,255,0.35)"
+              placeholderTextColor={colors.textMuted}
               style={[styles.input, { minHeight: 74 }]}
               multiline
             />
@@ -1406,7 +1419,7 @@ export default function PsycheScreen() {
               value={targetDate}
               onChangeText={setTargetDate}
               placeholder="YYYY-MM-DD"
-              placeholderTextColor="rgba(255,255,255,0.35)"
+              placeholderTextColor={colors.textMuted}
               style={styles.input}
             />
 
@@ -1468,7 +1481,10 @@ export default function PsycheScreen() {
               <Text style={styles.progressMetaText}>
                 Beantwortet: {answeredCount}/{questionSet.length}
               </Text>
-              <GoalProgressBar value={Math.round((answeredCount / Math.max(questionSet.length, 1)) * 100)} />
+              <GoalProgressBar
+                value={Math.round((answeredCount / Math.max(questionSet.length, 1)) * 100)}
+                styles={styles}
+              />
             </View>
 
             <View style={styles.questionCard}>
@@ -1485,6 +1501,8 @@ export default function PsycheScreen() {
                 onToggle={(optionId) =>
                   setAnswers((prev) => toggleMultiChoice(prev, currentQuestion.id, optionId))
                 }
+                styles={styles}
+                colors={colors}
               />
             </View>
 
@@ -1650,7 +1668,7 @@ export default function PsycheScreen() {
                   <Text style={styles.goalPercent}>{goal.progressPercent}%</Text>
                 </View>
 
-                <GoalProgressBar value={goal.progressPercent} />
+                <GoalProgressBar value={goal.progressPercent} styles={styles} />
 
                 <Text style={styles.goalSummary}>
                   {goal.recommendation?.summary ?? 'Noch keine Zusammenfassung vorhanden.'}
@@ -1694,407 +1712,446 @@ export default function PsycheScreen() {
   );
 }
 
-const styles = StyleSheet.create({
-  safe: {
-    flex: 1,
-    backgroundColor: PSYCHE_THEME.bg,
-  },
-  loadingWrap: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  loadingText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: '800',
-  },
-  content: {
-    padding: 18,
-    paddingBottom: 120,
-    gap: 16,
-  },
-  hero: {
-    backgroundColor: '#102754',
-    borderRadius: 24,
-    padding: 18,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
-  },
-  kicker: {
-    color: GOLD,
-    fontSize: 12,
-    fontWeight: '900',
-    letterSpacing: 1.2,
-    textTransform: 'uppercase',
-  },
-  title: {
-    color: '#fff',
-    fontSize: 28,
-    fontWeight: '900',
-    marginTop: 8,
-  },
-  subtitle: {
-    color: 'rgba(255,255,255,0.75)',
-    fontSize: 14,
-    lineHeight: 22,
-    marginTop: 10,
-  },
-  heroStats: {
-    flexDirection: 'row',
-    gap: 10,
-    marginTop: 16,
-  },
-  statPill: {
-    flex: 1,
-    backgroundColor: 'rgba(255,255,255,0.06)',
-    borderRadius: 16,
-    paddingVertical: 12,
-    alignItems: 'center',
-  },
-  statValue: {
-    color: '#fff',
-    fontSize: 20,
-    fontWeight: '900',
-  },
-  statLabel: {
-    color: 'rgba(255,255,255,0.68)',
-    fontSize: 12,
-    fontWeight: '800',
-    marginTop: 4,
-  },
-  card: {
-    backgroundColor: '#132C5F',
-    borderRadius: 24,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
-  },
-  cardTitle: {
-    color: '#fff',
-    fontSize: 18,
-    fontWeight: '900',
-  },
-  label: {
-    color: GOLD,
-    fontSize: 12,
-    fontWeight: '900',
-    marginTop: 14,
-    marginBottom: 8,
-    letterSpacing: 1,
-    textTransform: 'uppercase',
-  },
-  input: {
-    backgroundColor: 'rgba(255,255,255,0.06)',
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    color: '#fff',
-    fontSize: 15,
-    lineHeight: 22,
-  },
-  rowBetween: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  smallMuted: {
-    color: 'rgba(255,255,255,0.62)',
-    fontSize: 13,
-    lineHeight: 19,
-    marginTop: 4,
-  },
-  difficultyRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-    marginTop: 12,
-  },
-  diffButton: {
-    width: 44,
-    height: 44,
-    borderRadius: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: 'rgba(255,255,255,0.06)',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
-  },
-  diffButtonActive: {
-    backgroundColor: GOLD,
-    borderColor: GOLD,
-  },
-  diffButtonText: {
-    color: '#fff',
-    fontWeight: '900',
-    fontSize: 15,
-  },
-  diffButtonTextActive: {
-    color: '#1A1A1A',
-  },
-  primaryBtn: {
-    marginTop: 16,
-    borderRadius: 16,
-    backgroundColor: GOLD,
-    paddingVertical: 14,
-    alignItems: 'center',
-  },
-  primaryHalfBtn: {
-    flex: 1,
-    borderRadius: 16,
-    backgroundColor: GOLD,
-    paddingVertical: 14,
-    alignItems: 'center',
-  },
-  primaryBtnText: {
-    color: '#1A1A1A',
-    fontWeight: '900',
-    fontSize: 15,
-  },
-  secondaryBtn: {
-    flex: 1,
-    borderRadius: 14,
-    backgroundColor: 'rgba(255,255,255,0.08)',
-    paddingVertical: 12,
-    alignItems: 'center',
-  },
-  secondaryWideBtn: {
-    marginTop: 10,
-    borderRadius: 14,
-    backgroundColor: 'rgba(255,255,255,0.08)',
-    paddingVertical: 12,
-    alignItems: 'center',
-  },
-  secondaryBtnText: {
-    color: '#fff',
-    fontWeight: '800',
-    fontSize: 14,
-  },
-  deleteBtn: {
-    borderRadius: 14,
-    backgroundColor: 'rgba(255,90,90,0.14)',
-    paddingHorizontal: 16,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  deleteBtnText: {
-    color: '#ffabab',
-    fontWeight: '800',
-    fontSize: 14,
-  },
-  ghostBtn: {
-    marginTop: 12,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.12)',
-    paddingVertical: 12,
-    alignItems: 'center',
-  },
-  ghostBtnText: {
-    color: 'rgba(255,255,255,0.78)',
-    fontWeight: '800',
-    fontSize: 13,
-  },
-  btnDisabled: {
-    opacity: 0.55,
-  },
-  stepCounter: {
-    color: GOLD,
-    fontSize: 14,
-    fontWeight: '900',
-  },
-  progressMetaWrap: {
-    marginTop: 14,
-  },
-  progressMetaText: {
-    color: 'rgba(255,255,255,0.72)',
-    fontSize: 12,
-    fontWeight: '800',
-    marginBottom: 8,
-  },
-  questionCard: {
-    marginTop: 14,
-    borderRadius: 18,
-    backgroundColor: 'rgba(255,255,255,0.05)',
-    padding: 14,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.07)',
-  },
-  questionIndex: {
-    color: GOLD,
-    fontSize: 12,
-    fontWeight: '900',
-  },
-  questionTitle: {
-    color: '#fff',
-    fontSize: 18,
-    fontWeight: '800',
-    marginTop: 8,
-    lineHeight: 24,
-  },
-  questionWhy: {
-    color: 'rgba(255,255,255,0.62)',
-    fontSize: 13,
-    lineHeight: 19,
-    marginTop: 6,
-  },
-  questionActions: {
-    flexDirection: 'row',
-    gap: 10,
-    marginTop: 14,
-  },
-  optionsWrap: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-    marginTop: 12,
-  },
-  optionChip: {
-    borderRadius: 999,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    backgroundColor: 'rgba(255,255,255,0.06)',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
-  },
-  optionChipActive: {
-    backgroundColor: 'rgba(212,175,55,0.16)',
-    borderColor: 'rgba(212,175,55,0.35)',
-  },
-  optionText: {
-    color: '#fff',
-    fontWeight: '700',
-  },
-  optionTextActive: {
-    color: GOLD,
-  },
-  previewBlock: {
-    marginTop: 14,
-    borderRadius: 18,
-    backgroundColor: 'rgba(255,255,255,0.05)',
-    padding: 14,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.07)',
-  },
-  previewLabel: {
-    color: GOLD,
-    fontSize: 12,
-    fontWeight: '900',
-    textTransform: 'uppercase',
-    letterSpacing: 1,
-  },
-  previewText: {
-    color: '#fff',
-    fontSize: 14,
-    lineHeight: 22,
-    marginTop: 8,
-  },
-  previewGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 10,
-    marginTop: 14,
-  },
-  previewMiniCard: {
-    width: '47%',
-    backgroundColor: 'rgba(255,255,255,0.05)',
-    borderRadius: 18,
-    padding: 14,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.07)',
-  },
-  previewMiniValue: {
-    color: '#fff',
-    fontSize: 20,
-    fontWeight: '900',
-  },
-  previewMiniLabel: {
-    color: 'rgba(255,255,255,0.68)',
-    fontSize: 12,
-    fontWeight: '800',
-    marginTop: 4,
-  },
-  previewListItem: {
-    marginTop: 10,
-  },
-  previewListTitle: {
-    color: '#fff',
-    fontSize: 15,
-    fontWeight: '800',
-  },
-  previewListText: {
-    color: 'rgba(255,255,255,0.70)',
-    fontSize: 13,
-    lineHeight: 20,
-    marginTop: 4,
-  },
-  previewStepRow: {
-    flexDirection: 'row',
-    gap: 12,
-    marginTop: 10,
-  },
-  previewStepNumber: {
-    width: 28,
-    color: GOLD,
-    fontSize: 12,
-    fontWeight: '900',
-    marginTop: 2,
-  },
-  previewActionsStack: {
-    marginTop: 8,
-  },
-  emptyText: {
-    color: 'rgba(255,255,255,0.72)',
-    fontSize: 14,
-    lineHeight: 22,
-    marginTop: 12,
-  },
-  goalCard: {
-    marginTop: 14,
-    borderRadius: 18,
-    backgroundColor: 'rgba(255,255,255,0.05)',
-    padding: 14,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.07)',
-  },
-  goalTitle: {
-    color: '#fff',
-    fontSize: 17,
-    fontWeight: '900',
-  },
-  goalMeta: {
-    color: 'rgba(255,255,255,0.65)',
-    fontSize: 12,
-    marginTop: 4,
-  },
-  goalPercent: {
-    color: GOLD,
-    fontSize: 18,
-    fontWeight: '900',
-  },
-  progressTrack: {
-    height: 10,
-    borderRadius: 999,
-    backgroundColor: 'rgba(255,255,255,0.10)',
-    overflow: 'hidden',
-    marginTop: 12,
-  },
-  progressFill: {
-    height: '100%',
-    borderRadius: 999,
-    backgroundColor: '#76D88E',
-  },
-  goalSummary: {
-    color: 'rgba(255,255,255,0.82)',
-    fontSize: 14,
-    lineHeight: 21,
-    marginTop: 12,
-  },
-  goalActions: {
-    flexDirection: 'row',
-    gap: 10,
-    marginTop: 14,
-  },
-});
+function createStyles(
+  colors: ReturnType<typeof useAppTheme>['colors'],
+  fontFamily: ReturnType<typeof useAppTheme>['fontFamily']
+) {
+  return StyleSheet.create({
+    safe: {
+      flex: 1,
+      backgroundColor: colors.background,
+    },
+    loadingWrap: {
+      flex: 1,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    loadingText: {
+      color: colors.text,
+      fontSize: 16,
+      fontWeight: '800',
+      fontFamily: fontFamily.bold,
+    },
+    content: {
+      padding: 18,
+      paddingBottom: 120,
+      gap: 16,
+    },
+    hero: {
+      backgroundColor: colors.backgroundSecondary,
+      borderRadius: 24,
+      padding: 18,
+      borderWidth: 1,
+      borderColor: colors.border,
+    },
+    kicker: {
+      color: colors.primary,
+      fontSize: 12,
+      fontWeight: '900',
+      letterSpacing: 1.2,
+      textTransform: 'uppercase',
+      fontFamily: fontFamily.bold,
+    },
+    title: {
+      color: colors.text,
+      fontSize: 28,
+      fontWeight: '900',
+      marginTop: 8,
+      fontFamily: fontFamily.bold,
+    },
+    subtitle: {
+      color: colors.textMuted,
+      fontSize: 14,
+      lineHeight: 22,
+      marginTop: 10,
+      fontFamily: fontFamily.regular,
+    },
+    heroStats: {
+      flexDirection: 'row',
+      gap: 10,
+      marginTop: 16,
+    },
+    statPill: {
+      flex: 1,
+      backgroundColor: colors.cardSecondary,
+      borderRadius: 16,
+      paddingVertical: 12,
+      alignItems: 'center',
+    },
+    statValue: {
+      color: colors.text,
+      fontSize: 20,
+      fontWeight: '900',
+      fontFamily: fontFamily.bold,
+    },
+    statLabel: {
+      color: colors.textMuted,
+      fontSize: 12,
+      fontWeight: '800',
+      marginTop: 4,
+      fontFamily: fontFamily.bold,
+    },
+    card: {
+      backgroundColor: colors.card,
+      borderRadius: 24,
+      padding: 16,
+      borderWidth: 1,
+      borderColor: colors.border,
+    },
+    cardTitle: {
+      color: colors.text,
+      fontSize: 18,
+      fontWeight: '900',
+      fontFamily: fontFamily.bold,
+    },
+    label: {
+      color: colors.primary,
+      fontSize: 12,
+      fontWeight: '900',
+      marginTop: 14,
+      marginBottom: 8,
+      letterSpacing: 1,
+      textTransform: 'uppercase',
+      fontFamily: fontFamily.bold,
+    },
+    input: {
+      backgroundColor: colors.cardSecondary,
+      borderRadius: 16,
+      borderWidth: 1,
+      borderColor: colors.border,
+      paddingHorizontal: 14,
+      paddingVertical: 12,
+      color: colors.text,
+      fontSize: 15,
+      lineHeight: 22,
+      fontFamily: fontFamily.regular,
+    },
+    rowBetween: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+    },
+    smallMuted: {
+      color: colors.textMuted,
+      fontSize: 13,
+      lineHeight: 19,
+      marginTop: 4,
+      fontFamily: fontFamily.regular,
+    },
+    difficultyRow: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 8,
+      marginTop: 12,
+    },
+    diffButton: {
+      width: 44,
+      height: 44,
+      borderRadius: 12,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: colors.cardSecondary,
+      borderWidth: 1,
+      borderColor: colors.border,
+    },
+    diffButtonActive: {
+      backgroundColor: colors.primary,
+      borderColor: colors.primary,
+    },
+    diffButtonText: {
+      color: colors.text,
+      fontWeight: '900',
+      fontSize: 15,
+      fontFamily: fontFamily.bold,
+    },
+    diffButtonTextActive: {
+      color: colors.primaryText,
+    },
+    primaryBtn: {
+      marginTop: 16,
+      borderRadius: 16,
+      backgroundColor: colors.primary,
+      paddingVertical: 14,
+      alignItems: 'center',
+    },
+    primaryHalfBtn: {
+      flex: 1,
+      borderRadius: 16,
+      backgroundColor: colors.primary,
+      paddingVertical: 14,
+      alignItems: 'center',
+    },
+    primaryBtnText: {
+      color: colors.primaryText,
+      fontWeight: '900',
+      fontSize: 15,
+      fontFamily: fontFamily.bold,
+    },
+    secondaryBtn: {
+      flex: 1,
+      borderRadius: 14,
+      backgroundColor: colors.cardSecondary,
+      paddingVertical: 12,
+      alignItems: 'center',
+    },
+    secondaryWideBtn: {
+      marginTop: 10,
+      borderRadius: 14,
+      backgroundColor: colors.cardSecondary,
+      paddingVertical: 12,
+      alignItems: 'center',
+    },
+    secondaryBtnText: {
+      color: colors.text,
+      fontWeight: '800',
+      fontSize: 14,
+      fontFamily: fontFamily.bold,
+    },
+    deleteBtn: {
+      borderRadius: 14,
+      backgroundColor: colors.danger + '24',
+      paddingHorizontal: 16,
+      justifyContent: 'center',
+      alignItems: 'center',
+    },
+    deleteBtnText: {
+      color: colors.danger,
+      fontWeight: '800',
+      fontSize: 14,
+      fontFamily: fontFamily.bold,
+    },
+    ghostBtn: {
+      marginTop: 12,
+      borderRadius: 14,
+      borderWidth: 1,
+      borderColor: colors.border,
+      paddingVertical: 12,
+      alignItems: 'center',
+    },
+    ghostBtnText: {
+      color: colors.textMuted,
+      fontWeight: '800',
+      fontSize: 13,
+      fontFamily: fontFamily.bold,
+    },
+    btnDisabled: {
+      opacity: 0.55,
+    },
+    stepCounter: {
+      color: colors.primary,
+      fontSize: 14,
+      fontWeight: '900',
+      fontFamily: fontFamily.bold,
+    },
+    progressMetaWrap: {
+      marginTop: 14,
+    },
+    progressMetaText: {
+      color: colors.textMuted,
+      fontSize: 12,
+      fontWeight: '800',
+      marginBottom: 8,
+      fontFamily: fontFamily.bold,
+    },
+    questionCard: {
+      marginTop: 14,
+      borderRadius: 18,
+      backgroundColor: colors.cardSecondary,
+      padding: 14,
+      borderWidth: 1,
+      borderColor: colors.border,
+    },
+    questionIndex: {
+      color: colors.primary,
+      fontSize: 12,
+      fontWeight: '900',
+      fontFamily: fontFamily.bold,
+    },
+    questionTitle: {
+      color: colors.text,
+      fontSize: 18,
+      fontWeight: '800',
+      marginTop: 8,
+      lineHeight: 24,
+      fontFamily: fontFamily.bold,
+    },
+    questionWhy: {
+      color: colors.textMuted,
+      fontSize: 13,
+      lineHeight: 19,
+      marginTop: 6,
+      fontFamily: fontFamily.regular,
+    },
+    questionActions: {
+      flexDirection: 'row',
+      gap: 10,
+      marginTop: 14,
+    },
+    optionsWrap: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 8,
+      marginTop: 12,
+    },
+    optionChip: {
+      borderRadius: 999,
+      paddingHorizontal: 14,
+      paddingVertical: 10,
+      backgroundColor: colors.cardSecondary,
+      borderWidth: 1,
+      borderColor: colors.border,
+    },
+    optionChipActive: {
+      backgroundColor: colors.primary + '29',
+      borderColor: colors.primary + '59',
+    },
+    optionText: {
+      color: colors.text,
+      fontWeight: '700',
+      fontFamily: fontFamily.bold,
+    },
+    optionTextActive: {
+      color: colors.primary,
+    },
+    previewBlock: {
+      marginTop: 14,
+      borderRadius: 18,
+      backgroundColor: colors.cardSecondary,
+      padding: 14,
+      borderWidth: 1,
+      borderColor: colors.border,
+    },
+    previewLabel: {
+      color: colors.primary,
+      fontSize: 12,
+      fontWeight: '900',
+      textTransform: 'uppercase',
+      letterSpacing: 1,
+      fontFamily: fontFamily.bold,
+    },
+    previewText: {
+      color: colors.text,
+      fontSize: 14,
+      lineHeight: 22,
+      marginTop: 8,
+      fontFamily: fontFamily.regular,
+    },
+    previewGrid: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 10,
+      marginTop: 14,
+    },
+    previewMiniCard: {
+      width: '47%',
+      backgroundColor: colors.cardSecondary,
+      borderRadius: 18,
+      padding: 14,
+      borderWidth: 1,
+      borderColor: colors.border,
+    },
+    previewMiniValue: {
+      color: colors.text,
+      fontSize: 20,
+      fontWeight: '900',
+      fontFamily: fontFamily.bold,
+    },
+    previewMiniLabel: {
+      color: colors.textMuted,
+      fontSize: 12,
+      fontWeight: '800',
+      marginTop: 4,
+      fontFamily: fontFamily.bold,
+    },
+    previewListItem: {
+      marginTop: 10,
+    },
+    previewListTitle: {
+      color: colors.text,
+      fontSize: 15,
+      fontWeight: '800',
+      fontFamily: fontFamily.bold,
+    },
+    previewListText: {
+      color: colors.textMuted,
+      fontSize: 13,
+      lineHeight: 20,
+      marginTop: 4,
+      fontFamily: fontFamily.regular,
+    },
+    previewStepRow: {
+      flexDirection: 'row',
+      gap: 12,
+      marginTop: 10,
+    },
+    previewStepNumber: {
+      width: 28,
+      color: colors.primary,
+      fontSize: 12,
+      fontWeight: '900',
+      marginTop: 2,
+      fontFamily: fontFamily.bold,
+    },
+    previewActionsStack: {
+      marginTop: 8,
+    },
+    emptyText: {
+      color: colors.textMuted,
+      fontSize: 14,
+      lineHeight: 22,
+      marginTop: 12,
+      fontFamily: fontFamily.regular,
+    },
+    goalCard: {
+      marginTop: 14,
+      borderRadius: 18,
+      backgroundColor: colors.cardSecondary,
+      padding: 14,
+      borderWidth: 1,
+      borderColor: colors.border,
+    },
+    goalTitle: {
+      color: colors.text,
+      fontSize: 17,
+      fontWeight: '900',
+      fontFamily: fontFamily.bold,
+    },
+    goalMeta: {
+      color: colors.textMuted,
+      fontSize: 12,
+      marginTop: 4,
+      fontFamily: fontFamily.regular,
+    },
+    goalPercent: {
+      color: colors.primary,
+      fontSize: 18,
+      fontWeight: '900',
+      fontFamily: fontFamily.bold,
+    },
+    progressTrack: {
+      height: 10,
+      borderRadius: 999,
+      backgroundColor: colors.border,
+      overflow: 'hidden',
+      marginTop: 12,
+    },
+    progressFill: {
+      height: '100%',
+      borderRadius: 999,
+      backgroundColor: colors.success,
+    },
+    goalSummary: {
+      color: colors.text,
+      opacity: 0.82,
+      fontSize: 14,
+      lineHeight: 21,
+      marginTop: 12,
+      fontFamily: fontFamily.regular,
+    },
+    goalActions: {
+      flexDirection: 'row',
+      gap: 10,
+      marginTop: 14,
+    },
+  });
+}

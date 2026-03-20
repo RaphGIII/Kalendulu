@@ -16,8 +16,8 @@ import { useNow } from './useNow';
 import { useEvents } from './useEvents';
 import EventModal from './EventModal';
 import MonthView from './MonthView';
-import { ACCENT_GOLD, THEME } from './colors';
 import type { CalEvent } from './types';
+import { useAppTheme } from '../theme/ThemeProvider';
 
 dayjs.locale('de');
 
@@ -162,10 +162,12 @@ function ModeButton({
   label,
   active,
   onPress,
+  styles,
 }: {
   label: string;
   active?: boolean;
   onPress: () => void;
+  styles: ReturnType<typeof createStyles>;
 }) {
   return (
     <Pressable onPress={onPress} style={[styles.modeBtn, active && styles.modeBtnActive]}>
@@ -198,6 +200,9 @@ function formatRangeSingleLine(mode: CalendarMode, anchorDate: Date, shownDays: 
 }
 
 export default function WeekCalendar() {
+  const { colors, fontFamily } = useAppTheme();
+  const styles = useMemo(() => createStyles(colors, fontFamily), [colors, fontFamily]);
+
   const now = useNow();
   const { events, addEvent, updateEvent, deleteEvent } = useEvents();
 
@@ -293,11 +298,11 @@ export default function WeekCalendar() {
             </Pressable>
 
             <View style={styles.modeRow}>
-              <ModeButton label="M" active={mode === 'month'} onPress={() => setMode('month')} />
-              <ModeButton label="3" active={mode === 'three'} onPress={() => setMode('three')} />
-              <ModeButton label="5" active={mode === 'five'} onPress={() => setMode('five')} />
-              <ModeButton label="7" active={mode === 'seven'} onPress={() => setMode('seven')} />
-              <ModeButton label="Tag" active={mode === 'day'} onPress={() => setMode('day')} />
+              <ModeButton label="M" active={mode === 'month'} onPress={() => setMode('month')} styles={styles} />
+              <ModeButton label="3" active={mode === 'three'} onPress={() => setMode('three')} styles={styles} />
+              <ModeButton label="5" active={mode === 'five'} onPress={() => setMode('five')} styles={styles} />
+              <ModeButton label="7" active={mode === 'seven'} onPress={() => setMode('seven')} styles={styles} />
+              <ModeButton label="Tag" active={mode === 'day'} onPress={() => setMode('day')} styles={styles} />
             </View>
 
             <Pressable
@@ -407,7 +412,7 @@ export default function WeekCalendar() {
                                 left: `${left * 100}%`,
                                 width: `${width * 100}%`,
                                 height,
-                                borderLeftColor: event.color || ACCENT_GOLD,
+                                borderLeftColor: event.color || colors.primary,
                               },
                             ]}
                           >
@@ -466,254 +471,271 @@ export default function WeekCalendar() {
   );
 }
 
-const styles = StyleSheet.create({
-  safe: {
-    flex: 1,
-    backgroundColor: THEME.bg,
-  },
-  container: {
-    flex: 1,
-    backgroundColor: THEME.bg,
-  },
-  topCard: {
-    backgroundColor: THEME.bgDark,
-    marginHorizontal: 12,
-    marginTop: 10,
-    marginBottom: 6,
-    borderRadius: 22,
-    paddingHorizontal: 12,
-    paddingTop: 12,
-    paddingBottom: 12,
-    borderWidth: 1,
-    borderColor: THEME.border,
-  },
-  topNavRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-  },
-  bigDateWrap: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 6,
-  },
-  bigDateText: {
-    color: THEME.text,
-    fontSize: 30,
-    fontWeight: '900',
-    textAlign: 'center',
-  },
-  arrowBtn: {
-    width: 48,
-    height: 48,
-    borderRadius: 16,
-    backgroundColor: 'rgba(255,255,255,0.08)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  arrowText: {
-    color: THEME.text,
-    fontSize: 28,
-    fontWeight: '900',
-    lineHeight: 28,
-  },
-  bottomControlRow: {
-    marginTop: 14,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  todayBtn: {
-    width: 76,
-    height: 40,
-    borderRadius: 999,
-    backgroundColor: 'rgba(255,255,255,0.08)',
-    borderWidth: 1,
-    borderColor: THEME.border,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  todayBtnText: {
-    color: THEME.text,
-    fontWeight: '800',
-    fontSize: 12,
-  },
-  modeRow: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
-  modeBtn: {
-    flex: 1,
-    minWidth: 0,
-    height: 40,
-    borderRadius: 999,
-    backgroundColor: 'rgba(255,255,255,0.08)',
-    borderWidth: 1,
-    borderColor: THEME.border,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 4,
-  },
-  modeBtnActive: {
-    backgroundColor: 'rgba(212,175,55,0.16)',
-    borderColor: 'rgba(212,175,55,0.24)',
-  },
-  modeBtnText: {
-    color: THEME.text,
-    fontWeight: '800',
-    fontSize: 11,
-  },
-  modeBtnTextActive: {
-    color: ACCENT_GOLD,
-  },
-  addBtn: {
-    width: 40,
-    height: 40,
-    borderRadius: 14,
-    backgroundColor: ACCENT_GOLD,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  addBtnText: {
-    color: '#0B1636',
-    fontWeight: '900',
-    fontSize: 24,
-    lineHeight: 24,
-    marginTop: -1,
-  },
-  monthWrap: {
-    flex: 1,
-    paddingHorizontal: 14,
-    paddingBottom: 14,
-  },
-  calendarScroll: {
-    flex: 1,
-  },
-  calendarContent: {
-    paddingHorizontal: 8,
-    paddingBottom: 28,
-  },
-  dayHeaderRow: {
-    flexDirection: 'row',
-    alignItems: 'stretch',
-    marginBottom: 4,
-  },
-  timeHeaderSpacer: {
-    width: LEFT_GUTTER_COMPACT,
-  },
-  dayHeaderCell: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 4,
-  },
-  dayHeaderTop: {
-    color: THEME.muted,
-    fontSize: 11,
-    fontWeight: '900',
-  },
-  dayHeaderTopToday: {
-    color: ACCENT_GOLD,
-  },
-  dayHeaderBottom: {
-    marginTop: 2,
-    color: THEME.text,
-    fontSize: 16,
-    fontWeight: '900',
-  },
-  dayHeaderBottomToday: {
-    color: ACCENT_GOLD,
-  },
-  bodyRow: {
-    flexDirection: 'row',
-  },
-  timeColumn: {
-    width: LEFT_GUTTER_COMPACT,
-    height: BODY_HEIGHT,
-    paddingRight: 4,
-  },
-  timeSlot: {
-    height: HOUR_HEIGHT,
-    justifyContent: 'flex-start',
-    alignItems: 'flex-start',
-  },
-  timeLabel: {
-    color: THEME.muted,
-    fontSize: 12,
-    fontWeight: '800',
-    transform: [{ translateY: -7 }],
-  },
-  daysArea: {
-    flex: 1,
-    flexDirection: 'row',
-    height: BODY_HEIGHT,
-    borderTopWidth: 1,
-    borderColor: THEME.grid,
-  },
-  dayColumn: {
-    flex: 1,
-    position: 'relative',
-    borderLeftWidth: 1,
-    borderColor: THEME.grid,
-    overflow: 'hidden',
-  },
-  hourCell: {
-    height: HOUR_HEIGHT,
-  },
-  hourLine: {
-    borderTopWidth: 1,
-    borderColor: THEME.grid,
-    width: '100%',
-  },
-  nowLineWrap: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    zIndex: 15,
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  nowDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 99,
-    backgroundColor: '#FF7C7C',
-    marginLeft: 2,
-  },
-  nowLine: {
-    flex: 1,
-    height: 2,
-    backgroundColor: '#FF7C7C',
-    marginLeft: 4,
-  },
-  eventCard: {
-    position: 'absolute',
-    paddingHorizontal: 6,
-    paddingVertical: 4,
-    borderRadius: 10,
-    backgroundColor: 'rgba(255,255,255,0.10)',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.12)',
-    borderLeftWidth: 4,
-    overflow: 'hidden',
-    zIndex: 20,
-  },
-  eventTitle: {
-    color: THEME.text,
-    fontWeight: '900',
-  },
-  eventSub: {
-    color: 'rgba(255,255,255,0.82)',
-    fontWeight: '700',
-    marginTop: 2,
-  },
-  eventTime: {
-    marginTop: 3,
-    color: ACCENT_GOLD,
-    fontSize: 9,
-    fontWeight: '800',
-  },
-});
+function createStyles(
+  colors: ReturnType<typeof useAppTheme>['colors'],
+  fontFamily: ReturnType<typeof useAppTheme>['fontFamily']
+) {
+  return StyleSheet.create({
+    safe: {
+      flex: 1,
+      backgroundColor: colors.background,
+    },
+    container: {
+      flex: 1,
+      backgroundColor: colors.background,
+    },
+    topCard: {
+      backgroundColor: colors.backgroundSecondary,
+      marginHorizontal: 12,
+      marginTop: 10,
+      marginBottom: 6,
+      borderRadius: 22,
+      paddingHorizontal: 12,
+      paddingTop: 12,
+      paddingBottom: 12,
+      borderWidth: 1,
+      borderColor: colors.border,
+    },
+    topNavRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+    },
+    bigDateWrap: {
+      flex: 1,
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingHorizontal: 6,
+    },
+    bigDateText: {
+      color: colors.text,
+      fontSize: 30,
+      fontWeight: '900',
+      textAlign: 'center',
+      fontFamily: fontFamily.bold,
+    },
+    arrowBtn: {
+      width: 48,
+      height: 48,
+      borderRadius: 16,
+      backgroundColor: colors.cardSecondary,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    arrowText: {
+      color: colors.text,
+      fontSize: 28,
+      fontWeight: '900',
+      lineHeight: 28,
+      fontFamily: fontFamily.bold,
+    },
+    bottomControlRow: {
+      marginTop: 14,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+    },
+    todayBtn: {
+      width: 76,
+      height: 40,
+      borderRadius: 999,
+      backgroundColor: colors.cardSecondary,
+      borderWidth: 1,
+      borderColor: colors.border,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    todayBtnText: {
+      color: colors.text,
+      fontWeight: '800',
+      fontSize: 12,
+      fontFamily: fontFamily.bold,
+    },
+    modeRow: {
+      flex: 1,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+    },
+    modeBtn: {
+      flex: 1,
+      minWidth: 0,
+      height: 40,
+      borderRadius: 999,
+      backgroundColor: colors.cardSecondary,
+      borderWidth: 1,
+      borderColor: colors.border,
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingHorizontal: 4,
+    },
+    modeBtnActive: {
+      backgroundColor: colors.primary + '29',
+      borderColor: colors.primary + '3D',
+    },
+    modeBtnText: {
+      color: colors.text,
+      fontWeight: '800',
+      fontSize: 11,
+      fontFamily: fontFamily.bold,
+    },
+    modeBtnTextActive: {
+      color: colors.primary,
+    },
+    addBtn: {
+      width: 40,
+      height: 40,
+      borderRadius: 14,
+      backgroundColor: colors.primary,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    addBtnText: {
+      color: colors.primaryText,
+      fontWeight: '900',
+      fontSize: 24,
+      lineHeight: 24,
+      marginTop: -1,
+      fontFamily: fontFamily.bold,
+    },
+    monthWrap: {
+      flex: 1,
+      paddingHorizontal: 14,
+      paddingBottom: 14,
+    },
+    calendarScroll: {
+      flex: 1,
+    },
+    calendarContent: {
+      paddingHorizontal: 8,
+      paddingBottom: 28,
+    },
+    dayHeaderRow: {
+      flexDirection: 'row',
+      alignItems: 'stretch',
+      marginBottom: 4,
+    },
+    timeHeaderSpacer: {
+      width: LEFT_GUTTER_COMPACT,
+    },
+    dayHeaderCell: {
+      flex: 1,
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingVertical: 4,
+    },
+    dayHeaderTop: {
+      color: colors.textMuted,
+      fontSize: 11,
+      fontWeight: '900',
+      fontFamily: fontFamily.bold,
+    },
+    dayHeaderTopToday: {
+      color: colors.primary,
+    },
+    dayHeaderBottom: {
+      marginTop: 2,
+      color: colors.text,
+      fontSize: 16,
+      fontWeight: '900',
+      fontFamily: fontFamily.bold,
+    },
+    dayHeaderBottomToday: {
+      color: colors.primary,
+    },
+    bodyRow: {
+      flexDirection: 'row',
+    },
+    timeColumn: {
+      width: LEFT_GUTTER_COMPACT,
+      height: BODY_HEIGHT,
+      paddingRight: 4,
+    },
+    timeSlot: {
+      height: HOUR_HEIGHT,
+      justifyContent: 'flex-start',
+      alignItems: 'flex-start',
+    },
+    timeLabel: {
+      color: colors.textMuted,
+      fontSize: 12,
+      fontWeight: '800',
+      transform: [{ translateY: -7 }],
+      fontFamily: fontFamily.bold,
+    },
+    daysArea: {
+      flex: 1,
+      flexDirection: 'row',
+      height: BODY_HEIGHT,
+      borderTopWidth: 1,
+      borderColor: colors.border,
+    },
+    dayColumn: {
+      flex: 1,
+      position: 'relative',
+      borderLeftWidth: 1,
+      borderColor: colors.border,
+      overflow: 'hidden',
+    },
+    hourCell: {
+      height: HOUR_HEIGHT,
+    },
+    hourLine: {
+      borderTopWidth: 1,
+      borderColor: colors.border,
+      width: '100%',
+    },
+    nowLineWrap: {
+      position: 'absolute',
+      left: 0,
+      right: 0,
+      zIndex: 15,
+      flexDirection: 'row',
+      alignItems: 'center',
+    },
+    nowDot: {
+      width: 8,
+      height: 8,
+      borderRadius: 99,
+      backgroundColor: colors.danger,
+      marginLeft: 2,
+    },
+    nowLine: {
+      flex: 1,
+      height: 2,
+      backgroundColor: colors.danger,
+      marginLeft: 4,
+    },
+    eventCard: {
+      position: 'absolute',
+      paddingHorizontal: 6,
+      paddingVertical: 4,
+      borderRadius: 10,
+      backgroundColor: colors.cardSecondary,
+      borderWidth: 1,
+      borderColor: colors.border,
+      borderLeftWidth: 4,
+      overflow: 'hidden',
+      zIndex: 20,
+    },
+    eventTitle: {
+      color: colors.text,
+      fontWeight: '900',
+      fontFamily: fontFamily.bold,
+    },
+    eventSub: {
+      color: colors.text,
+      opacity: 0.82,
+      fontWeight: '700',
+      marginTop: 2,
+      fontFamily: fontFamily.regular,
+    },
+    eventTime: {
+      marginTop: 3,
+      color: colors.primary,
+      fontSize: 9,
+      fontWeight: '800',
+      fontFamily: fontFamily.bold,
+    },
+  });
+}

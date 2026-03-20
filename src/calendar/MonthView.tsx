@@ -3,8 +3,8 @@ import { View, Text, Pressable, StyleSheet } from 'react-native';
 import dayjs from 'dayjs';
 import 'dayjs/locale/de';
 
-import { ACCENT_GOLD, THEME } from './colors';
 import type { CalEvent } from './types';
+import { useAppTheme } from '../theme/ThemeProvider';
 
 dayjs.locale('de');
 
@@ -22,6 +22,9 @@ function normalizeMonthGridStart(month: dayjs.Dayjs) {
 }
 
 export default function MonthView({ monthDate, onSelectDay, events = [] }: Props) {
+  const { colors, fontFamily } = useAppTheme();
+  const styles = useMemo(() => createStyles(colors, fontFamily), [colors, fontFamily]);
+
   const month = dayjs(monthDate).startOf('month');
 
   const weekDays = useMemo(() => ['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So'], []);
@@ -84,7 +87,7 @@ export default function MonthView({ monthDate, onSelectDay, events = [] }: Props
                         key={`${event.id}_${index}`}
                         style={[
                           styles.eventDot,
-                          { backgroundColor: event.color || ACCENT_GOLD },
+                          { backgroundColor: event.color || colors.primary },
                         ]}
                       />
                     ))}
@@ -101,94 +104,105 @@ export default function MonthView({ monthDate, onSelectDay, events = [] }: Props
   );
 }
 
-const styles = StyleSheet.create({
-  wrap: {
-    paddingTop: 4,
-    paddingBottom: 8,
-  },
-  monthHeader: {
-    marginBottom: 12,
-    paddingHorizontal: 2,
-  },
-  monthTitle: {
-    fontSize: 18,
-    fontWeight: '900',
-    color: THEME.text,
-  },
-  weekHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 10,
-    paddingHorizontal: 2,
-  },
-  weekHeaderText: {
-    width: '14.285%',
-    textAlign: 'center',
-    color: THEME.muted,
-    fontWeight: '900',
-    fontSize: 13,
-  },
-  grid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    justifyContent: 'space-between',
-    gap: 6,
-  },
-  cell: {
-    width: '13.4%',
-    aspectRatio: 0.93,
-    borderRadius: 18,
-    paddingTop: 10,
-    paddingHorizontal: 4,
-    backgroundColor: 'rgba(255,255,255,0.05)',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.07)',
-  },
-  outMonthCell: {
-    backgroundColor: 'rgba(255,255,255,0.025)',
-  },
-  todayCell: {
-    backgroundColor: 'rgba(212,175,55,0.12)',
-    borderColor: 'rgba(212,175,55,0.34)',
-    shadowColor: ACCENT_GOLD,
-    shadowOpacity: 0.14,
-    shadowRadius: 6,
-    shadowOffset: { width: 0, height: 2 },
-    elevation: 2,
-  },
-  cellTop: {
-    flex: 1,
-    alignItems: 'center',
-  },
-  cellText: {
-    fontWeight: '900',
-    fontSize: 17,
-    color: 'rgba(255,255,255,0.94)',
-  },
-  weekendText: {
-    color: 'rgba(255,255,255,0.88)',
-  },
-  outMonthText: {
-    color: 'rgba(255,255,255,0.28)',
-  },
-  todayText: {
-    color: ACCENT_GOLD,
-  },
-  eventDotsWrap: {
-    marginTop: 8,
-    flexDirection: 'row',
-    gap: 4,
-    alignItems: 'center',
-    justifyContent: 'center',
-    minHeight: 8,
-  },
-  eventDotsSpacer: {
-    marginTop: 8,
-    minHeight: 8,
-  },
-  eventDot: {
-    width: 5,
-    height: 5,
-    borderRadius: 99,
-  },
-});
+function createStyles(
+  colors: ReturnType<typeof useAppTheme>['colors'],
+  fontFamily: ReturnType<typeof useAppTheme>['fontFamily']
+) {
+  return StyleSheet.create({
+    wrap: {
+      paddingTop: 4,
+      paddingBottom: 8,
+    },
+    monthHeader: {
+      marginBottom: 12,
+      paddingHorizontal: 2,
+    },
+    monthTitle: {
+      fontSize: 18,
+      fontWeight: '900',
+      color: colors.text,
+      fontFamily: fontFamily.bold,
+    },
+    weekHeader: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      marginBottom: 10,
+      paddingHorizontal: 2,
+    },
+    weekHeaderText: {
+      width: '14.285%',
+      textAlign: 'center',
+      color: colors.textMuted,
+      fontWeight: '900',
+      fontSize: 13,
+      fontFamily: fontFamily.bold,
+    },
+    grid: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      justifyContent: 'space-between',
+      gap: 6,
+    },
+    cell: {
+      width: '13.4%',
+      aspectRatio: 0.93,
+      borderRadius: 18,
+      paddingTop: 10,
+      paddingHorizontal: 4,
+      backgroundColor: colors.cardSecondary,
+      borderWidth: 1,
+      borderColor: colors.border,
+    },
+    outMonthCell: {
+      backgroundColor: colors.backgroundSecondary,
+      opacity: 0.55,
+    },
+    todayCell: {
+      backgroundColor: colors.primary + '1F',
+      borderColor: colors.primary + '57',
+      shadowColor: colors.primary,
+      shadowOpacity: 0.14,
+      shadowRadius: 6,
+      shadowOffset: { width: 0, height: 2 },
+      elevation: 2,
+    },
+    cellTop: {
+      flex: 1,
+      alignItems: 'center',
+    },
+    cellText: {
+      fontWeight: '900',
+      fontSize: 17,
+      color: colors.text,
+      fontFamily: fontFamily.bold,
+    },
+    weekendText: {
+      color: colors.text,
+      opacity: 0.88,
+    },
+    outMonthText: {
+      color: colors.textMuted,
+      opacity: 0.45,
+    },
+    todayText: {
+      color: colors.primary,
+    },
+    eventDotsWrap: {
+      marginTop: 8,
+      flexDirection: 'row',
+      gap: 4,
+      alignItems: 'center',
+      justifyContent: 'center',
+      minHeight: 8,
+    },
+    eventDotsSpacer: {
+      marginTop: 8,
+      minHeight: 8,
+    },
+    eventDot: {
+      width: 5,
+      height: 5,
+      borderRadius: 99,
+    },
+  });
+}

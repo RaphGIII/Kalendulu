@@ -19,23 +19,13 @@ import {
   GoalExecutionPlan,
   GoalMiniStep,
   GoalMiniStepStatus,
-  PlannerExecutionChecklistItem,
   PlannerExecutionStep,
   PsycheGoal,
 } from '../psyche/types';
 import { loadPsycheGoals, savePsycheGoals } from '../psyche/storage';
+import { useAppTheme } from '../theme/ThemeProvider';
 
 dayjs.locale('de');
-
-const BG = '#2E437A';
-const SURFACE = '#132C5F';
-const SURFACE_SOFT = '#183D8A';
-const TEXT = '#FFFFFF';
-const MUTED = 'rgba(255,255,255,0.72)';
-const BORDER = 'rgba(255,255,255,0.10)';
-const ACCENT = '#D4AF37';
-const ACCENT_SOFT = 'rgba(212,175,55,0.18)';
-const DANGER = '#FF8F8F';
 
 const HORIZONS_STORAGE_KEY = 'progress_custom_horizons_v1';
 const CATEGORIES_STORAGE_KEY = 'progress_custom_goal_categories_v1';
@@ -202,10 +192,12 @@ function GoalRow({
   goal,
   horizons,
   onPress,
+  styles,
 }: {
   goal: AppGoal;
   horizons: CustomHorizon[];
   onPress: () => void;
+  styles: ReturnType<typeof createStyles>;
 }) {
   const progress = computeGoalProgress(goal);
   const horizonColor = getHorizonColor(inferGoalHorizon(goal, horizons), horizons);
@@ -226,11 +218,13 @@ function StepRow({
   description,
   done,
   onToggle,
+  styles,
 }: {
   title: string;
   description?: string;
   done?: boolean;
   onToggle: () => void;
+  styles: ReturnType<typeof createStyles>;
 }) {
   return (
     <Pressable onPress={onToggle} style={styles.stepRow}>
@@ -249,6 +243,9 @@ function StepRow({
 }
 
 export default function ProgressScreen({ navigation }: Props) {
+  const { colors, fontFamily } = useAppTheme();
+  const styles = useMemo(() => createStyles(colors, fontFamily), [colors, fontFamily]);
+
   const [goals, setGoals] = useState<AppGoal[]>([]);
   const [selectedGoalId, setSelectedGoalId] = useState<string | null>(null);
 
@@ -722,6 +719,7 @@ export default function ProgressScreen({ navigation }: Props) {
                           goal={goal}
                           horizons={horizons}
                           onPress={() => setSelectedGoalId(goal.id)}
+                          styles={styles}
                         />
                       ))
                     ) : (
@@ -747,7 +745,7 @@ export default function ProgressScreen({ navigation }: Props) {
                 value={newGoalTitle}
                 onChangeText={setNewGoalTitle}
                 placeholder="Ziel eingeben"
-                placeholderTextColor={MUTED}
+                placeholderTextColor={colors.textMuted}
                 style={styles.input}
               />
 
@@ -756,7 +754,7 @@ export default function ProgressScreen({ navigation }: Props) {
                 value={newGoalTargetDate}
                 onChangeText={setNewGoalTargetDate}
                 placeholder="YYYY-MM-DD"
-                placeholderTextColor={MUTED}
+                placeholderTextColor={colors.textMuted}
                 style={styles.input}
               />
 
@@ -834,7 +832,7 @@ export default function ProgressScreen({ navigation }: Props) {
                             value={editingHorizonTitle}
                             onChangeText={setEditingHorizonTitle}
                             placeholder="Zeitraum"
-                            placeholderTextColor={MUTED}
+                            placeholderTextColor={colors.textMuted}
                             style={styles.input}
                           />
 
@@ -917,7 +915,7 @@ export default function ProgressScreen({ navigation }: Props) {
                     value={newHorizonTitle}
                     onChangeText={setNewHorizonTitle}
                     placeholder="z. B. 3 Jahres Ziele"
-                    placeholderTextColor={MUTED}
+                    placeholderTextColor={colors.textMuted}
                     style={styles.input}
                   />
 
@@ -925,7 +923,7 @@ export default function ProgressScreen({ navigation }: Props) {
                     value={newHorizonYears}
                     onChangeText={setNewHorizonYears}
                     placeholder="Jahre optional"
-                    placeholderTextColor={MUTED}
+                    placeholderTextColor={colors.textMuted}
                     style={styles.input}
                     keyboardType="numeric"
                   />
@@ -934,7 +932,7 @@ export default function ProgressScreen({ navigation }: Props) {
                     value={newHorizonMonths}
                     onChangeText={setNewHorizonMonths}
                     placeholder="Monate optional"
-                    placeholderTextColor={MUTED}
+                    placeholderTextColor={colors.textMuted}
                     style={styles.input}
                     keyboardType="numeric"
                   />
@@ -978,7 +976,7 @@ export default function ProgressScreen({ navigation }: Props) {
                             value={editingCategoryTitle}
                             onChangeText={setEditingCategoryTitle}
                             placeholder="Kategorie"
-                            placeholderTextColor={MUTED}
+                            placeholderTextColor={colors.textMuted}
                             style={styles.input}
                           />
 
@@ -1056,7 +1054,7 @@ export default function ProgressScreen({ navigation }: Props) {
                     value={newCategoryTitle}
                     onChangeText={setNewCategoryTitle}
                     placeholder="z. B. Finanzen"
-                    placeholderTextColor={MUTED}
+                    placeholderTextColor={colors.textMuted}
                     style={styles.input}
                   />
 
@@ -1102,7 +1100,7 @@ export default function ProgressScreen({ navigation }: Props) {
 
         <Text style={styles.detailTitle}>Step by Step</Text>
 
-<View style={styles.stepsWrap}>
+        <View style={styles.stepsWrap}>
           {visibleSteps.length ? (
             visibleSteps.map((step) => (
               <StepRow
@@ -1117,6 +1115,7 @@ export default function ProgressScreen({ navigation }: Props) {
                     void handleToggleAiChecklist(step.stepId, step.itemId);
                   }
                 }}
+                styles={styles}
               />
             ))
           ) : (
@@ -1146,7 +1145,7 @@ export default function ProgressScreen({ navigation }: Props) {
                     value={step.title}
                     onChangeText={(value) => handleDraftStepChange(step.id, 'title', value)}
                     placeholder="Step"
-                    placeholderTextColor={MUTED}
+                    placeholderTextColor={colors.textMuted}
                     style={styles.input}
                   />
 
@@ -1155,7 +1154,7 @@ export default function ProgressScreen({ navigation }: Props) {
                     value={step.description ?? ''}
                     onChangeText={(value) => handleDraftStepChange(step.id, 'description', value)}
                     placeholder="Beschreibung"
-                    placeholderTextColor={MUTED}
+                    placeholderTextColor={colors.textMuted}
                     style={[styles.input, styles.textarea]}
                     multiline
                   />
@@ -1182,7 +1181,7 @@ export default function ProgressScreen({ navigation }: Props) {
                   value={newStepTitle}
                   onChangeText={setNewStepTitle}
                   placeholder="Titel"
-                  placeholderTextColor={MUTED}
+                  placeholderTextColor={colors.textMuted}
                   style={styles.input}
                 />
 
@@ -1191,7 +1190,7 @@ export default function ProgressScreen({ navigation }: Props) {
                   value={newStepDescription}
                   onChangeText={setNewStepDescription}
                   placeholder="Beschreibung"
-                  placeholderTextColor={MUTED}
+                  placeholderTextColor={colors.textMuted}
                   style={[styles.input, styles.textarea]}
                   multiline
                 />
@@ -1217,416 +1216,451 @@ export default function ProgressScreen({ navigation }: Props) {
   );
 }
 
-const styles = StyleSheet.create({
-  safe: {
-    flex: 1,
-    backgroundColor: BG,
-  },
+function createStyles(
+  colors: ReturnType<typeof useAppTheme>['colors'],
+  fontFamily: ReturnType<typeof useAppTheme>['fontFamily']
+) {
+  const dangerSoft = colors.danger + '1F';
+  const dangerBorder = colors.danger + '38';
 
-  content: {
-    paddingHorizontal: 20,
-    paddingTop: 18,
-    paddingBottom: 120,
-  },
+  return StyleSheet.create({
+    safe: {
+      flex: 1,
+      backgroundColor: colors.background,
+    },
 
-  pageTitle: {
-    color: TEXT,
-    fontSize: 30,
-    fontWeight: '800',
-  },
+    content: {
+      paddingHorizontal: 20,
+      paddingTop: 18,
+      paddingBottom: 120,
+    },
 
-  group: {
-    marginBottom: 24,
-  },
-  groupHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 10,
-  },
-  groupTitle: {
-    color: MUTED,
-    fontSize: 15,
-    fontWeight: '600',
-  },
-  groupPlus: {
-    width: 28,
-    height: 28,
-    borderRadius: 999,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: ACCENT_SOFT,
-  },
-  groupPlusText: {
-    color: ACCENT,
-    fontSize: 18,
-    fontWeight: '600',
-    marginTop: -1,
-  },
+    pageTitle: {
+      color: colors.text,
+      fontSize: 30,
+      fontWeight: '800',
+      fontFamily: fontFamily.bold,
+    },
 
-  groupList: {
-    backgroundColor: SURFACE,
-    borderRadius: 18,
-    borderWidth: 1,
-    borderColor: BORDER,
-    overflow: 'hidden',
-  },
+    group: {
+      marginBottom: 24,
+    },
+    groupHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      marginBottom: 10,
+    },
+    groupTitle: {
+      color: colors.textMuted,
+      fontSize: 15,
+      fontWeight: '600',
+      fontFamily: fontFamily.regular,
+    },
+    groupPlus: {
+      width: 28,
+      height: 28,
+      borderRadius: 999,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: colors.primary + '2E',
+    },
+    groupPlusText: {
+      color: colors.primary,
+      fontSize: 18,
+      fontWeight: '600',
+      marginTop: -1,
+      fontFamily: fontFamily.bold,
+    },
 
-  goalRowBar: {
-    width: 3,
-    alignSelf: 'stretch',
-    borderRadius: 999,
-    marginRight: 12,
-  },
-  goalRow: {
-    minHeight: 56,
-    paddingLeft: 6,
-    paddingRight: 16,
-    paddingVertical: 14,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    borderBottomWidth: 1,
-    borderBottomColor: BORDER,
-  },
-  goalRowTitle: {
-    flex: 1,
-    color: TEXT,
-    fontSize: 16,
-    fontWeight: '500',
-    paddingRight: 12,
-  },
-  goalRowPercent: {
-    color: ACCENT,
-    fontSize: 15,
-    fontWeight: '700',
-  },
+    groupList: {
+      backgroundColor: colors.backgroundSecondary,
+      borderRadius: 18,
+      borderWidth: 1,
+      borderColor: colors.border,
+      overflow: 'hidden',
+    },
 
-  emptyText: {
-    color: MUTED,
-    fontSize: 14,
-    paddingHorizontal: 16,
-    paddingVertical: 16,
-  },
+    goalRowBar: {
+      width: 3,
+      alignSelf: 'stretch',
+      borderRadius: 999,
+      marginRight: 12,
+    },
+    goalRow: {
+      minHeight: 56,
+      paddingLeft: 6,
+      paddingRight: 16,
+      paddingVertical: 14,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      borderBottomWidth: 1,
+      borderBottomColor: colors.border,
+    },
+    goalRowTitle: {
+      flex: 1,
+      color: colors.text,
+      fontSize: 16,
+      fontWeight: '500',
+      paddingRight: 12,
+      fontFamily: fontFamily.regular,
+    },
+    goalRowPercent: {
+      color: colors.primary,
+      fontSize: 15,
+      fontWeight: '700',
+      fontFamily: fontFamily.bold,
+    },
 
-  backBtn: {
-    alignSelf: 'flex-start',
-    marginBottom: 16,
-  },
-  backBtnText: {
-    color: ACCENT,
-    fontSize: 15,
-    fontWeight: '600',
-  },
+    emptyText: {
+      color: colors.textMuted,
+      fontSize: 14,
+      paddingHorizontal: 16,
+      paddingVertical: 16,
+      fontFamily: fontFamily.regular,
+    },
 
-  stepsWrap: {
-    backgroundColor: SURFACE,
-    borderRadius: 18,
-    borderWidth: 1,
-    borderColor: BORDER,
-    paddingVertical: 4,
-  },
+    backBtn: {
+      alignSelf: 'flex-start',
+      marginBottom: 16,
+    },
+    backBtnText: {
+      color: colors.primary,
+      fontSize: 15,
+      fontWeight: '600',
+      fontFamily: fontFamily.bold,
+    },
 
-  stepRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    borderBottomWidth: 1,
-    borderBottomColor: BORDER,
-  },
-  check: {
-    width: 24,
-    height: 24,
-    borderRadius: 999,
-    borderWidth: 1.5,
-    borderColor: ACCENT,
-    marginRight: 12,
-    marginTop: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: SURFACE,
-  },
-  checkDone: {
-    backgroundColor: ACCENT_SOFT,
-  },
-  checkMark: {
-    color: ACCENT,
-    fontSize: 14,
-    fontWeight: '800',
-  },
-  stepTextWrap: {
-    flex: 1,
-  },
-  stepTitle: {
-    color: TEXT,
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  stepTitleDone: {
-    opacity: 0.7,
-  },
-  stepDescription: {
-    color: MUTED,
-    fontSize: 14,
-    lineHeight: 20,
-    marginTop: 4,
-  },
+    stepsWrap: {
+      backgroundColor: colors.backgroundSecondary,
+      borderRadius: 18,
+      borderWidth: 1,
+      borderColor: colors.border,
+      paddingVertical: 4,
+    },
 
-  fab: {
-    position: 'absolute',
-    right: 20,
-    bottom: 33,
-    width: 56,
-    height: 56,
-    borderRadius: 999,
-    backgroundColor: ACCENT,
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: '#000',
-    shadowOpacity: 0.12,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 6,
-  },
-  fabText: {
-    color: '#FFFFFF',
-    fontSize: 30,
-    fontWeight: '500',
-    marginTop: -2,
-  },
+    stepRow: {
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+      paddingHorizontal: 16,
+      paddingVertical: 14,
+      borderBottomWidth: 1,
+      borderBottomColor: colors.border,
+    },
+    check: {
+      width: 24,
+      height: 24,
+      borderRadius: 999,
+      borderWidth: 1.5,
+      borderColor: colors.primary,
+      marginRight: 12,
+      marginTop: 1,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: colors.backgroundSecondary,
+    },
+    checkDone: {
+      backgroundColor: colors.primary + '2E',
+    },
+    checkMark: {
+      color: colors.primary,
+      fontSize: 14,
+      fontWeight: '800',
+      fontFamily: fontFamily.bold,
+    },
+    stepTextWrap: {
+      flex: 1,
+    },
+    stepTitle: {
+      color: colors.text,
+      fontSize: 16,
+      fontWeight: '600',
+      fontFamily: fontFamily.regular,
+    },
+    stepTitleDone: {
+      opacity: 0.7,
+    },
+    stepDescription: {
+      color: colors.textMuted,
+      fontSize: 14,
+      lineHeight: 20,
+      marginTop: 4,
+      fontFamily: fontFamily.regular,
+    },
 
-  editFab: {
-    position: 'absolute',
-    right: 20,
-    bottom: 64,
-    paddingHorizontal: 16,
-    height: 42,
-    borderRadius: 999,
-    backgroundColor: ACCENT,
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: '#000',
-    shadowOpacity: 0.12,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 6,
-  },
-  editFabText: {
-    color: '#FFFFFF',
-    fontSize: 14,
-    fontWeight: '700',
-  },
+    fab: {
+      position: 'absolute',
+      right: 20,
+      bottom: 33,
+      width: 56,
+      height: 56,
+      borderRadius: 999,
+      backgroundColor: colors.primary,
+      alignItems: 'center',
+      justifyContent: 'center',
+      shadowColor: '#000',
+      shadowOpacity: 0.12,
+      shadowRadius: 10,
+      shadowOffset: { width: 0, height: 4 },
+      elevation: 6,
+    },
+    fabText: {
+      color: colors.primaryText,
+      fontSize: 30,
+      fontWeight: '500',
+      marginTop: -2,
+      fontFamily: fontFamily.bold,
+    },
 
-  deleteGoalBtn: {
-    marginTop: 18,
-    alignSelf: 'flex-start',
-  },
-  deleteGoalBtnText: {
-    color: DANGER,
-    fontSize: 14,
-    fontWeight: '600',
-  },
+    editFab: {
+      position: 'absolute',
+      right: 20,
+      bottom: 64,
+      paddingHorizontal: 16,
+      height: 42,
+      borderRadius: 999,
+      backgroundColor: colors.primary,
+      alignItems: 'center',
+      justifyContent: 'center',
+      shadowColor: '#000',
+      shadowOpacity: 0.12,
+      shadowRadius: 10,
+      shadowOffset: { width: 0, height: 4 },
+      elevation: 6,
+    },
+    editFabText: {
+      color: colors.primaryText,
+      fontSize: 14,
+      fontWeight: '700',
+      fontFamily: fontFamily.bold,
+    },
 
-  modalBackdrop: {
-    flex: 1,
-    backgroundColor: 'rgba(5,10,24,0.42)',
-    justifyContent: 'flex-end',
-  },
-  sheet: {
-    maxHeight: '88%',
-    backgroundColor: SURFACE,
-    borderTopLeftRadius: 26,
-    borderTopRightRadius: 26,
-    paddingHorizontal: 20,
-    paddingTop: 18,
-    paddingBottom: 28,
-  },
-  sheetTitle: {
-    color: TEXT,
-    fontSize: 22,
-    fontWeight: '800',
-    marginBottom: 18,
-  },
+    deleteGoalBtn: {
+      marginTop: 18,
+      alignSelf: 'flex-start',
+    },
+    deleteGoalBtnText: {
+      color: colors.danger,
+      fontSize: 14,
+      fontWeight: '600',
+      fontFamily: fontFamily.bold,
+    },
 
-  label: {
-    color: MUTED,
-    fontSize: 13,
-    fontWeight: '600',
-    marginBottom: 8,
-  },
-  input: {
-    backgroundColor: SURFACE_SOFT,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: BORDER,
-    color: TEXT,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    fontSize: 15,
-    marginBottom: 14,
-  },
-  textarea: {
-    minHeight: 84,
-    textAlignVertical: 'top',
-  },
+    modalBackdrop: {
+      flex: 1,
+      backgroundColor: 'rgba(5,10,24,0.42)',
+      justifyContent: 'flex-end',
+    },
+    sheet: {
+      maxHeight: '88%',
+      backgroundColor: colors.backgroundSecondary,
+      borderTopLeftRadius: 26,
+      borderTopRightRadius: 26,
+      paddingHorizontal: 20,
+      paddingTop: 18,
+      paddingBottom: 28,
+    },
+    sheetTitle: {
+      color: colors.text,
+      fontSize: 22,
+      fontWeight: '800',
+      marginBottom: 18,
+      fontFamily: fontFamily.bold,
+    },
 
-  pillRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-    marginBottom: 14,
-  },
-  pill: {
-    paddingHorizontal: 12,
-    paddingVertical: 9,
-    borderRadius: 999,
-    backgroundColor: SURFACE_SOFT,
-    borderWidth: 1,
-    borderColor: BORDER,
-  },
-  pillActive: {
-    backgroundColor: ACCENT_SOFT,
-    borderColor: '#C8D7FF',
-  },
-  pillText: {
-    color: TEXT,
-    fontSize: 13,
-    fontWeight: '500',
-  },
-  pillTextActive: {
-    color: ACCENT,
-    fontWeight: '700',
-  },
+    label: {
+      color: colors.textMuted,
+      fontSize: 13,
+      fontWeight: '600',
+      marginBottom: 8,
+      fontFamily: fontFamily.regular,
+    },
+    input: {
+      backgroundColor: colors.card,
+      borderRadius: 14,
+      borderWidth: 1,
+      borderColor: colors.border,
+      color: colors.text,
+      paddingHorizontal: 14,
+      paddingVertical: 12,
+      fontSize: 15,
+      marginBottom: 14,
+      fontFamily: fontFamily.regular,
+    },
+    textarea: {
+      minHeight: 84,
+      textAlignVertical: 'top',
+    },
 
-  modalActions: {
-    flexDirection: 'row',
-    gap: 10,
-    marginTop: 8,
-  },
-  primaryBtn: {
-    flex: 1,
-    height: 48,
-    borderRadius: 14,
-    backgroundColor: ACCENT,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  primaryBtnText: {
-    color: '#FFFFFF',
-    fontSize: 15,
-    fontWeight: '700',
-  },
-  secondaryBtn: {
-    flex: 1,
-    height: 48,
-    borderRadius: 14,
-    backgroundColor: SURFACE_SOFT,
-    borderWidth: 1,
-    borderColor: BORDER,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  secondaryBtnText: {
-    color: TEXT,
-    fontSize: 15,
-    fontWeight: '600',
-  },
+    pillRow: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 8,
+      marginBottom: 14,
+    },
+    pill: {
+      paddingHorizontal: 12,
+      paddingVertical: 9,
+      borderRadius: 999,
+      backgroundColor: colors.card,
+      borderWidth: 1,
+      borderColor: colors.border,
+    },
+    pillActive: {
+      backgroundColor: colors.primary + '2E',
+      borderColor: colors.text + '33',
+    },
+    pillText: {
+      color: colors.text,
+      fontSize: 13,
+      fontWeight: '500',
+      fontFamily: fontFamily.regular,
+    },
+    pillTextActive: {
+      color: colors.primary,
+      fontWeight: '700',
+      fontFamily: fontFamily.bold,
+    },
 
-  editList: {
-    paddingBottom: 12,
-  },
-  editCard: {
-    backgroundColor: SURFACE_SOFT,
-    borderRadius: 16,
-    padding: 14,
-    borderWidth: 1,
-    borderColor: BORDER,
-    marginBottom: 12,
-  },
-  editActionsRow: {
-    flexDirection: 'row',
-    gap: 8,
-  },
-  smallBtn: {
-    minWidth: 44,
-    height: 40,
-    borderRadius: 12,
-    backgroundColor: SURFACE,
-    borderWidth: 1,
-    borderColor: BORDER,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  smallBtnText: {
-    color: TEXT,
-    fontSize: 16,
-    fontWeight: '700',
-  },
-  smallBtnDanger: {
-    flex: 1,
-    height: 40,
-    borderRadius: 12,
-    backgroundColor: 'rgba(255,143,143,0.12)',
-    borderWidth: 1,
-    borderColor: 'rgba(255,143,143,0.22)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  smallBtnDangerText: {
-    color: DANGER,
-    fontSize: 14,
-    fontWeight: '700',
-  },
-  addCard: {
-    backgroundColor: SURFACE_SOFT,
-    borderRadius: 16,
-    padding: 14,
-    borderWidth: 1,
-    borderColor: BORDER,
-    marginTop: 4,
-  },
+    modalActions: {
+      flexDirection: 'row',
+      gap: 10,
+      marginTop: 8,
+    },
+    primaryBtn: {
+      flex: 1,
+      height: 48,
+      borderRadius: 14,
+      backgroundColor: colors.primary,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    primaryBtnText: {
+      color: colors.primaryText,
+      fontSize: 15,
+      fontWeight: '700',
+      fontFamily: fontFamily.bold,
+    },
+    secondaryBtn: {
+      flex: 1,
+      height: 48,
+      borderRadius: 14,
+      backgroundColor: colors.card,
+      borderWidth: 1,
+      borderColor: colors.border,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    secondaryBtnText: {
+      color: colors.text,
+      fontSize: 15,
+      fontWeight: '600',
+      fontFamily: fontFamily.regular,
+    },
 
-  pageTitleCard: {
-    backgroundColor: SURFACE,
-    borderRadius: 18,
-    borderWidth: 1,
-    borderColor: BORDER,
-    paddingHorizontal: 16,
-    paddingVertical: 16,
-    marginBottom: 18,
-  },
-  pageSubtitle: {
-    color: MUTED,
-    fontSize: 14,
-    lineHeight: 20,
-    marginTop: 6,
-    fontWeight: '500',
-  },
-  manageMetaBtn: {
-    alignSelf: 'flex-start',
-    marginTop: 12,
-  },
-  manageMetaBtnText: {
-    color: ACCENT,
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  inputStaticText: {
-    color: TEXT,
-    fontSize: 16,
-    fontWeight: '600',
-    marginBottom: 4,
-  },
-  inputStaticSubtext: {
-    color: MUTED,
-    fontSize: 13,
-    marginBottom: 10,
-  },
-  detailTitle: {
-  color: TEXT,
-  fontSize: 30,
-  fontWeight: '800',
-  marginBottom: 20,
-},
-});
+    editList: {
+      paddingBottom: 12,
+    },
+    editCard: {
+      backgroundColor: colors.card,
+      borderRadius: 16,
+      padding: 14,
+      borderWidth: 1,
+      borderColor: colors.border,
+      marginBottom: 12,
+    },
+    editActionsRow: {
+      flexDirection: 'row',
+      gap: 8,
+    },
+    smallBtn: {
+      minWidth: 44,
+      height: 40,
+      borderRadius: 12,
+      backgroundColor: colors.backgroundSecondary,
+      borderWidth: 1,
+      borderColor: colors.border,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    smallBtnText: {
+      color: colors.text,
+      fontSize: 16,
+      fontWeight: '700',
+      fontFamily: fontFamily.bold,
+    },
+    smallBtnDanger: {
+      flex: 1,
+      height: 40,
+      borderRadius: 12,
+      backgroundColor: dangerSoft,
+      borderWidth: 1,
+      borderColor: dangerBorder,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    smallBtnDangerText: {
+      color: colors.danger,
+      fontSize: 14,
+      fontWeight: '700',
+      fontFamily: fontFamily.bold,
+    },
+    addCard: {
+      backgroundColor: colors.card,
+      borderRadius: 16,
+      padding: 14,
+      borderWidth: 1,
+      borderColor: colors.border,
+      marginTop: 4,
+    },
+
+    pageTitleCard: {
+      backgroundColor: colors.backgroundSecondary,
+      borderRadius: 18,
+      borderWidth: 1,
+      borderColor: colors.border,
+      paddingHorizontal: 16,
+      paddingVertical: 16,
+      marginBottom: 18,
+    },
+    pageSubtitle: {
+      color: colors.textMuted,
+      fontSize: 14,
+      lineHeight: 20,
+      marginTop: 6,
+      fontWeight: '500',
+      fontFamily: fontFamily.regular,
+    },
+    manageMetaBtn: {
+      alignSelf: 'flex-start',
+      marginTop: 12,
+    },
+    manageMetaBtnText: {
+      color: colors.primary,
+      fontSize: 14,
+      fontWeight: '600',
+      fontFamily: fontFamily.bold,
+    },
+    inputStaticText: {
+      color: colors.text,
+      fontSize: 16,
+      fontWeight: '600',
+      marginBottom: 4,
+      fontFamily: fontFamily.regular,
+    },
+    inputStaticSubtext: {
+      color: colors.textMuted,
+      fontSize: 13,
+      marginBottom: 10,
+      fontFamily: fontFamily.regular,
+    },
+    detailTitle: {
+      color: colors.text,
+      fontSize: 30,
+      fontWeight: '800',
+      marginBottom: 20,
+      fontFamily: fontFamily.bold,
+    },
+  });
+}
