@@ -121,7 +121,7 @@ export default function ToDoScreen() {
     <SafeAreaView style={styles.safe}>
       <ScrollView contentContainerStyle={styles.content}>
         <View style={styles.header}>
-          <Text style={styles.title}>Todos</Text>
+          <Text style={styles.title}>To-Do's</Text>
         </View>
 
         <View style={styles.card}>

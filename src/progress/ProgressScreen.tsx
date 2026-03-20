@@ -1,5 +1,7 @@
 import React, { useCallback, useMemo, useState } from 'react';
 import {
+  Alert,
+  Modal,
   Pressable,
   SafeAreaView,
   ScrollView,
@@ -11,8 +13,10 @@ import {
 import dayjs from 'dayjs';
 import 'dayjs/locale/de';
 import { useFocusEffect } from '@react-navigation/native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import {
+  GoalExecutionPlan,
   GoalMiniStep,
   GoalMiniStepStatus,
   PlannerExecutionChecklistItem,
@@ -23,17 +27,18 @@ import { loadPsycheGoals, savePsycheGoals } from '../psyche/storage';
 
 dayjs.locale('de');
 
-const BG = '#2B1D14';
-const BG_SOFT = '#3A281C';
-const CARD = '#4A3426';
-const CARD_LIGHT = '#5B4030';
-const CARD_DARK = '#3A281C';
-const TEXT = '#FFF8EE';
-const MUTED = 'rgba(255,248,238,0.72)';
-const BORDER = 'rgba(255,248,238,0.10)';
-const GOLD = '#D9B26B';
-const GREEN = '#7EDB7A';
-const RED = '#FF8F8F';
+const BG = '#2E437A';
+const SURFACE = '#132C5F';
+const SURFACE_SOFT = '#183D8A';
+const TEXT = '#FFFFFF';
+const MUTED = 'rgba(255,255,255,0.72)';
+const BORDER = 'rgba(255,255,255,0.10)';
+const ACCENT = '#D4AF37';
+const ACCENT_SOFT = 'rgba(212,175,55,0.18)';
+const DANGER = '#FF8F8F';
+
+const HORIZONS_STORAGE_KEY = 'progress_custom_horizons_v1';
+const CATEGORIES_STORAGE_KEY = 'progress_custom_goal_categories_v1';
 
 type Props = {
   navigation?: {
@@ -41,88 +46,55 @@ type Props = {
   };
 };
 
-type ManualStepCategoryId =
-  | 'focus'
-  | 'training'
-  | 'nutrition'
-  | 'study'
-  | 'admin'
-  | 'review'
-  | 'custom';
-
-type ManualGoalCategoryId =
-  | 'fitness'
-  | 'study'
-  | 'business'
-  | 'music'
-  | 'project'
-  | 'other';
-
 type ManualStep = GoalMiniStep & {
-  category?: ManualStepCategoryId;
-  color?: string;
   note?: string;
   source?: 'manual';
 };
 
-const STEP_CATEGORIES: Array<{
-  id: ManualStepCategoryId;
-  label: string;
-  color: string;
-  bg: string;
-}> = [
-  { id: 'focus', label: 'Fokus', color: '#8FD3FF', bg: 'rgba(143,211,255,0.16)' },
-  { id: 'training', label: 'Training', color: '#7EDB7A', bg: 'rgba(126,219,122,0.16)' },
-  { id: 'nutrition', label: 'Ernährung', color: '#FFC16B', bg: 'rgba(255,193,107,0.16)' },
-  { id: 'study', label: 'Lernen', color: '#C6A2FF', bg: 'rgba(198,162,255,0.16)' },
-  { id: 'admin', label: 'Planung', color: '#FF9CC7', bg: 'rgba(255,156,199,0.16)' },
-  { id: 'review', label: 'Review', color: '#9BE7D8', bg: 'rgba(155,231,216,0.16)' },
-  { id: 'custom', label: 'Custom', color: '#D9B26B', bg: 'rgba(217,178,107,0.16)' },
+type CustomHorizon = {
+  id: string;
+  title: string;
+  yearsFrom?: number;
+  monthsFrom?: number;
+  order: number;
+};
+
+type CustomGoalCategory = {
+  id: string;
+  title: string;
+  order: number;
+};
+
+type AppGoal = PsycheGoal & {
+  manualSteps?: ManualStep[];
+  customCategoryLabel?: string;
+  source?: string;
+  progress?: {
+    total?: number;
+    [key: string]: unknown;
+  };
+  executionPlan?: GoalExecutionPlan;
+};
+
+const DEFAULT_HORIZONS: CustomHorizon[] = [
+  { id: 'life', title: 'Lebensziele', yearsFrom: 20, order: 1 },
+  { id: 'tenYears', title: '10 Jahres Ziele', yearsFrom: 10, order: 2 },
+  { id: 'fiveYears', title: '5 Jahres Ziele', yearsFrom: 5, order: 3 },
+  { id: 'oneYear', title: '1 Jahres Ziele', yearsFrom: 1, order: 4 },
+  { id: 'short', title: 'Kurzfristige Ziele', monthsFrom: 3, order: 5 },
 ];
 
-const GOAL_CATEGORIES: Array<{
-  id: ManualGoalCategoryId;
-  label: string;
-  color: string;
-  bg: string;
-}> = [
-  { id: 'fitness', label: 'Fitness', color: '#7EDB7A', bg: 'rgba(126,219,122,0.16)' },
-  { id: 'study', label: 'Lernen', color: '#C6A2FF', bg: 'rgba(198,162,255,0.16)' },
-  { id: 'business', label: 'Business', color: '#FFB870', bg: 'rgba(255,184,112,0.16)' },
-  { id: 'music', label: 'Musik', color: '#8FD3FF', bg: 'rgba(143,211,255,0.16)' },
-  { id: 'project', label: 'Projekt', color: '#FF9CC7', bg: 'rgba(255,156,199,0.16)' },
-  { id: 'other', label: 'Andere', color: GOLD, bg: 'rgba(217,178,107,0.16)' },
+const DEFAULT_GOAL_CATEGORIES: CustomGoalCategory[] = [
+  { id: 'fitness', title: 'Fitness', order: 1 },
+  { id: 'study', title: 'Lernen', order: 2 },
+  { id: 'business', title: 'Business', order: 3 },
+  { id: 'music', title: 'Musik', order: 4 },
+  { id: 'project', title: 'Projekt', order: 5 },
+  { id: 'other', title: 'Andere', order: 6 },
 ];
 
 function uid(prefix: string) {
   return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-}
-
-function clamp(value: number, min: number, max: number) {
-  return Math.max(min, Math.min(max, value));
-}
-
-function getStepCategoryMeta(category?: string) {
-  return STEP_CATEGORIES.find((item) => item.id === category) ?? STEP_CATEGORIES[0];
-}
-
-function getGoalCategoryMeta(category?: string) {
-  return (
-    GOAL_CATEGORIES.find((item) => item.id === category) ??
-    GOAL_CATEGORIES[GOAL_CATEGORIES.length - 1]
-  );
-}
-
-function getManualSteps(goal: PsycheGoal): ManualStep[] {
-  const raw = goal.manualSteps;
-  return Array.isArray(raw) ? (raw as ManualStep[]) : [];
-}
-
-function getAiSteps(goal: PsycheGoal): PlannerExecutionStep[] {
-  if (Array.isArray(goal.executionPlan?.steps)) {
-    return goal.executionPlan.steps;
-  }
-  return [];
 }
 
 function toMiniStepStatus(done: boolean): GoalMiniStepStatus {
@@ -134,199 +106,217 @@ function buildMiniStepsFromManual(steps: ManualStep[]): GoalMiniStep[] {
     id: step.id,
     order: index + 1,
     title: step.title,
-    description: step.description,
+    description: step.description ?? step.title,
     done: !!step.done,
     status: toMiniStepStatus(!!step.done),
+    linkedTodoTitles: step.linkedTodoTitles ?? [],
+    linkedHabitTitles: step.linkedHabitTitles ?? [],
   }));
 }
 
-function computeGoalProgress(goal: PsycheGoal) {
+function getManualSteps(goal: AppGoal): ManualStep[] {
+  return Array.isArray(goal.manualSteps) ? goal.manualSteps : [];
+}
+
+function getAiSteps(goal: AppGoal): PlannerExecutionStep[] {
+  return Array.isArray(goal.executionPlan?.steps) ? goal.executionPlan.steps : [];
+}
+
+function computeGoalProgress(goal: AppGoal) {
   const manualSteps = getManualSteps(goal);
   const aiSteps = getAiSteps(goal);
 
   const manualTotal = manualSteps.length;
-  const manualDone = manualSteps.filter((step) => step.done).length;
+  const manualDone = manualSteps.filter((step) => !!step.done).length;
 
   const aiChecklist = aiSteps.flatMap((step) => step.checklist ?? []);
   const aiTotal = aiChecklist.length;
-  const aiDone = aiChecklist.filter((item) => item.done).length;
+  const aiDone = aiChecklist.filter((item) => !!item.done).length;
 
   const total = manualTotal + aiTotal;
-  if (!total) return 0;
 
-  return Math.round(((manualDone + aiDone) / total) * 100);
+  if (total > 0) {
+    return Math.round(((manualDone + aiDone) / total) * 100);
+  }
+
+  if (typeof goal.progressPercent === 'number') {
+    return Math.max(0, Math.min(100, goal.progressPercent));
+  }
+
+  if (goal.progress && typeof goal.progress.total === 'number') {
+    return Math.max(0, Math.min(100, goal.progress.total));
+  }
+
+  return 0;
 }
 
-function isAiStepComplete(step: PlannerExecutionStep) {
-  const checklist = step.checklist ?? [];
-  return checklist.length > 0 && checklist.every((item) => item.done);
+function getHorizonThresholdMonths(horizon: CustomHorizon) {
+  if (typeof horizon.yearsFrom === 'number') return horizon.yearsFrom * 12;
+  if (typeof horizon.monthsFrom === 'number') return horizon.monthsFrom;
+  return 0;
 }
 
-function GoalProgressBar({ value }: { value: number }) {
-  return (
-    <View style={styles.progressTrack}>
-      <View style={[styles.progressFill, { width: `${clamp(value, 0, 100)}%` }]} />
-    </View>
+function inferGoalHorizon(goal: AppGoal, customHorizons: CustomHorizon[]): string {
+  if (!customHorizons.length) return 'life';
+  if (!goal.targetDate) return customHorizons[0]?.id ?? 'life';
+
+  const now = dayjs();
+  const target = dayjs(goal.targetDate);
+
+  if (!target.isValid()) return customHorizons[0]?.id ?? 'life';
+
+  const monthsUntil = target.diff(now, 'month', true);
+
+  const sortedByThresholdDesc = [...customHorizons].sort(
+    (a, b) => getHorizonThresholdMonths(b) - getHorizonThresholdMonths(a),
   );
+
+  for (const horizon of sortedByThresholdDesc) {
+    const threshold = getHorizonThresholdMonths(horizon);
+    if (monthsUntil >= threshold) {
+      return horizon.id;
+    }
+  }
+
+  const lastByOrder = [...customHorizons].sort((a, b) => a.order - b.order).slice(-1)[0];
+  return lastByOrder?.id ?? 'short';
 }
 
-function GoalCard({
+function prettyGoalCategory(goal: AppGoal, categories: CustomGoalCategory[]) {
+  if (goal.customCategoryLabel?.trim()) return goal.customCategoryLabel.trim();
+  const found = categories.find((item) => item.id === goal.category);
+  return found?.title ?? 'Andere';
+}
+
+function getHorizonColor(horizonId: string, customHorizons: CustomHorizon[]) {
+  const ordered = [...customHorizons].sort((a, b) => a.order - b.order);
+  const palette = ['#7EDB7A', '#6AD2FF', '#C6A2FF', '#FFB870', '#D4AF37', '#FF9CC7', '#9BE7D8'];
+
+  const index = ordered.findIndex((item) => item.id === horizonId);
+  if (index === -1) return '#D4AF37';
+
+  return palette[index % palette.length];
+}
+
+function GoalRow({
   goal,
-  onOpen,
+  horizons,
+  onPress,
 }: {
-  goal: PsycheGoal;
-  onOpen: () => void;
+  goal: AppGoal;
+  horizons: CustomHorizon[];
+  onPress: () => void;
 }) {
   const progress = computeGoalProgress(goal);
-  const manualCount = getManualSteps(goal).length;
-  const aiCount = getAiSteps(goal).length;
-  const categoryMeta = getGoalCategoryMeta(String(goal.category));
+  const horizonColor = getHorizonColor(inferGoalHorizon(goal, horizons), horizons);
 
   return (
-    <Pressable onPress={onOpen} style={styles.goalCard}>
-      <View style={styles.goalTopRow}>
-        <View style={{ flex: 1, paddingRight: 12 }}>
-          <View style={styles.goalTopMetaRow}>
-            <View
-              style={[
-                styles.goalTypeBadge,
-                {
-                  backgroundColor: categoryMeta.bg,
-                  borderColor: `${categoryMeta.color}55`,
-                },
-              ]}
-            >
-              <Text style={[styles.goalTypeBadgeText, { color: categoryMeta.color }]}>
-                {categoryMeta.label}
-              </Text>
-            </View>
-            <Text style={styles.goalTinyMeta}>
-              {manualCount} eigene · {aiCount} KI
-            </Text>
-          </View>
-
-          <Text style={styles.goalTitle}>{goal.title}</Text>
-          <Text style={styles.goalMeta}>
-            Ziel bis {dayjs(goal.targetDate).format('DD.MM.YYYY')}
-          </Text>
-        </View>
-
-        <Text style={styles.goalPercent}>{progress}%</Text>
-      </View>
-
-      <GoalProgressBar value={progress} />
+    <Pressable onPress={onPress} style={styles.goalRow}>
+      <View style={[styles.goalRowBar, { backgroundColor: horizonColor }]} />
+      <Text numberOfLines={1} style={styles.goalRowTitle}>
+        {goal.title}
+      </Text>
+      <Text style={styles.goalRowPercent}>{progress}%</Text>
     </Pressable>
   );
 }
 
-function ManualStepRow({
-  step,
-  onToggle,
-  onDelete,
-}: {
-  step: ManualStep;
-  onToggle: () => void;
-  onDelete: () => void;
-}) {
-  const meta = getStepCategoryMeta(step.category);
-
-  return (
-    <View style={styles.stepRowWrap}>
-      <View style={[styles.stepAccent, { backgroundColor: meta.color }]} />
-
-      <Pressable onPress={onToggle} style={[styles.stepRow, step.done && styles.stepRowDone]}>
-        <View style={styles.stepMain}>
-          <View style={styles.stepTopLine}>
-            <View
-              style={[
-                styles.stepCategoryBadge,
-                {
-                  backgroundColor: meta.bg,
-                  borderColor: `${meta.color}55`,
-                },
-              ]}
-            >
-              <Text style={[styles.stepCategoryText, { color: meta.color }]}>
-                {meta.label}
-              </Text>
-            </View>
-            <Text style={styles.stepStateText}>{step.done ? 'Erledigt' : 'Offen'}</Text>
-          </View>
-
-          <Text style={[styles.stepTitle, step.done && styles.stepTitleDone]}>
-            {step.title}
-          </Text>
-
-          {!!step.note && (
-            <Text style={[styles.stepNote, step.done && styles.stepNoteDone]}>
-              {step.note}
-            </Text>
-          )}
-        </View>
-
-        <View style={[styles.checkCircle, step.done && styles.checkCircleDone]}>
-          {step.done ? <Text style={styles.checkMark}>✓</Text> : null}
-        </View>
-      </Pressable>
-
-      <Pressable onPress={onDelete} style={styles.deleteMiniBtn}>
-        <Text style={styles.deleteMiniBtnText}>Löschen</Text>
-      </Pressable>
-    </View>
-  );
-}
-
-function AiChecklistRow({
-  item,
+function StepRow({
+  title,
+  description,
+  done,
   onToggle,
 }: {
-  item: PlannerExecutionChecklistItem;
+  title: string;
+  description?: string;
+  done?: boolean;
   onToggle: () => void;
 }) {
   return (
-    <Pressable
-      onPress={onToggle}
-      style={[styles.aiCheckRow, item.done && styles.aiCheckRowDone]}
-    >
-      <View style={[styles.checkCircle, item.done && styles.checkCircleDone]}>
-        {item.done ? <Text style={styles.checkMark}>✓</Text> : null}
+    <Pressable onPress={onToggle} style={styles.stepRow}>
+      <View style={[styles.check, done && styles.checkDone]}>
+        {done ? <Text style={styles.checkMark}>✓</Text> : null}
       </View>
-      <Text style={[styles.aiCheckText, item.done && styles.aiCheckTextDone]}>{item.label}</Text>
+
+      <View style={styles.stepTextWrap}>
+        <Text style={[styles.stepTitle, done && styles.stepTitleDone]}>{title}</Text>
+        {!!description && description !== title ? (
+          <Text style={styles.stepDescription}>{description}</Text>
+        ) : null}
+      </View>
     </Pressable>
   );
 }
 
 export default function ProgressScreen({ navigation }: Props) {
-  const [goals, setGoals] = useState<PsycheGoal[]>([]);
+  const [goals, setGoals] = useState<AppGoal[]>([]);
   const [selectedGoalId, setSelectedGoalId] = useState<string | null>(null);
 
-  const [newGoalTitle, setNewGoalTitle] = useState('');
-  const [newGoalCategory, setNewGoalCategory] = useState<ManualGoalCategoryId>('other');
-  const [newGoalTargetDate, setNewGoalTargetDate] = useState(
-    dayjs().add(90, 'day').format('YYYY-MM-DD'),
-  );
+  const [editOpen, setEditOpen] = useState(false);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [manageMetaOpen, setManageMetaOpen] = useState(false);
 
+  const [horizons, setHorizons] = useState<CustomHorizon[]>(DEFAULT_HORIZONS);
+  const [goalCategories, setGoalCategories] = useState<CustomGoalCategory[]>(DEFAULT_GOAL_CATEGORIES);
+
+  const [newGoalTitle, setNewGoalTitle] = useState('');
+  const [newGoalCategory, setNewGoalCategory] = useState<string>('other');
+  const [newGoalTargetDate, setNewGoalTargetDate] = useState(dayjs().add(1, 'year').format('YYYY-MM-DD'));
+  const [newGoalHorizon, setNewGoalHorizon] = useState<string>('oneYear');
+
+  const [newHorizonTitle, setNewHorizonTitle] = useState('');
+  const [newHorizonYears, setNewHorizonYears] = useState('');
+  const [newHorizonMonths, setNewHorizonMonths] = useState('');
+
+  const [newCategoryTitle, setNewCategoryTitle] = useState('');
+
+  const [editingHorizonId, setEditingHorizonId] = useState<string | null>(null);
+  const [editingHorizonTitle, setEditingHorizonTitle] = useState('');
+
+  const [editingCategoryId, setEditingCategoryId] = useState<string | null>(null);
+  const [editingCategoryTitle, setEditingCategoryTitle] = useState('');
+
+  const [draftSteps, setDraftSteps] = useState<ManualStep[]>([]);
   const [newStepTitle, setNewStepTitle] = useState('');
-  const [newStepNote, setNewStepNote] = useState('');
-  const [newStepCategory, setNewStepCategory] = useState<ManualStepCategoryId>('focus');
+  const [newStepDescription, setNewStepDescription] = useState('');
 
   const reloadGoals = useCallback(async () => {
-    const storedGoals = await loadPsycheGoals();
+    const storedGoals = (await loadPsycheGoals()) as AppGoal[];
     const normalized = storedGoals.map((goal) => ({
       ...goal,
       progressPercent: computeGoalProgress(goal),
     }));
     setGoals(normalized);
-
-    setSelectedGoalId((prev) => {
-      if (!prev) return prev;
-      return normalized.some((goal) => goal.id === prev) ? prev : null;
-    });
+    setSelectedGoalId((prev) => (prev && normalized.some((g) => g.id === prev) ? prev : null));
   }, []);
+
+  async function loadCustomMeta() {
+    try {
+      const horizonsRaw = await AsyncStorage.getItem(HORIZONS_STORAGE_KEY);
+      const categoriesRaw = await AsyncStorage.getItem(CATEGORIES_STORAGE_KEY);
+
+      if (horizonsRaw) {
+        const parsed = JSON.parse(horizonsRaw) as CustomHorizon[];
+        if (Array.isArray(parsed) && parsed.length) {
+          setHorizons(parsed.sort((a, b) => a.order - b.order));
+        }
+      }
+
+      if (categoriesRaw) {
+        const parsed = JSON.parse(categoriesRaw) as CustomGoalCategory[];
+        if (Array.isArray(parsed) && parsed.length) {
+          setGoalCategories(parsed.sort((a, b) => a.order - b.order));
+        }
+      }
+    } catch (error) {
+      console.log('Meta laden fehlgeschlagen', error);
+    }
+  }
 
   useFocusEffect(
     useCallback(() => {
       void reloadGoals();
+      void loadCustomMeta();
     }, [reloadGoals]),
   );
 
@@ -335,9 +325,161 @@ export default function ProgressScreen({ navigation }: Props) {
     [goals, selectedGoalId],
   );
 
-  async function persistGoals(nextGoals: PsycheGoal[]) {
+  const groupedGoals = useMemo(() => {
+    const groups: Record<string, AppGoal[]> = {};
+
+    horizons.forEach((horizon) => {
+      groups[horizon.id] = [];
+    });
+
+    for (const goal of goals) {
+      const horizonId = inferGoalHorizon(goal, horizons);
+      if (!groups[horizonId]) groups[horizonId] = [];
+      groups[horizonId].push(goal);
+    }
+
+    return groups;
+  }, [goals, horizons]);
+
+  const visibleSteps = useMemo(() => {
+    if (!selectedGoal) return [];
+
+    const manualSteps = getManualSteps(selectedGoal);
+    if (manualSteps.length) {
+      return manualSteps.map((step) => ({
+        id: step.id,
+        title: step.title,
+        description: step.description || step.note || '',
+        done: !!step.done,
+        type: 'manual' as const,
+      }));
+    }
+
+    const aiSteps = getAiSteps(selectedGoal);
+    return aiSteps.flatMap((step) =>
+      (step.checklist ?? []).map((item) => ({
+        id: `${step.id}_${item.id}`,
+        stepId: step.id,
+        itemId: item.id,
+        title: item.label,
+        description: step.explanation || '',
+        done: !!item.done,
+        type: 'ai' as const,
+      })),
+    );
+  }, [selectedGoal]);
+
+  async function persistGoals(nextGoals: AppGoal[]) {
     setGoals(nextGoals);
-    await savePsycheGoals(nextGoals);
+    await savePsycheGoals(nextGoals as PsycheGoal[]);
+  }
+
+  async function persistHorizons(nextHorizons: CustomHorizon[]) {
+    const normalized = nextHorizons
+      .map((item, index) => ({ ...item, order: index + 1 }))
+      .sort((a, b) => a.order - b.order);
+
+    setHorizons(normalized);
+    await AsyncStorage.setItem(HORIZONS_STORAGE_KEY, JSON.stringify(normalized));
+  }
+
+  async function persistGoalCategories(nextCategories: CustomGoalCategory[]) {
+    const normalized = nextCategories
+      .map((item, index) => ({ ...item, order: index + 1 }))
+      .sort((a, b) => a.order - b.order);
+
+    setGoalCategories(normalized);
+    await AsyncStorage.setItem(CATEGORIES_STORAGE_KEY, JSON.stringify(normalized));
+  }
+
+  async function handleRenameHorizon() {
+    const trimmed = editingHorizonTitle.trim();
+    if (!editingHorizonId || !trimmed) return;
+
+    const next = horizons.map((item) =>
+      item.id === editingHorizonId ? { ...item, title: trimmed } : item,
+    );
+
+    await persistHorizons(next);
+    setEditingHorizonId(null);
+    setEditingHorizonTitle('');
+  }
+
+  async function handleDeleteHorizon(id: string) {
+    if (horizons.length <= 1) return;
+
+    Alert.alert('Zeitraum löschen', 'Diesen Zeitraum wirklich löschen?', [
+      { text: 'Abbrechen', style: 'cancel' },
+      {
+        text: 'Löschen',
+        style: 'destructive',
+        onPress: async () => {
+          const nextHorizons = horizons.filter((item) => item.id !== id);
+          await persistHorizons(nextHorizons);
+        },
+      },
+    ]);
+  }
+
+  async function handleRenameCategory() {
+    const trimmed = editingCategoryTitle.trim();
+    if (!editingCategoryId || !trimmed) return;
+
+    const next = goalCategories.map((item) =>
+      item.id === editingCategoryId ? { ...item, title: trimmed } : item,
+    );
+
+    await persistGoalCategories(next);
+    setEditingCategoryId(null);
+    setEditingCategoryTitle('');
+  }
+
+  async function handleDeleteCategory(id: string) {
+    if (goalCategories.length <= 1) return;
+
+    Alert.alert('Kategorie löschen', 'Diese Kategorie wirklich löschen?', [
+      { text: 'Abbrechen', style: 'cancel' },
+      {
+        text: 'Löschen',
+        style: 'destructive',
+        onPress: async () => {
+          const nextCategories = goalCategories.filter((item) => item.id !== id);
+          await persistGoalCategories(nextCategories);
+        },
+      },
+    ]);
+  }
+
+  function targetDateFromHorizon(horizonId: string) {
+    const horizon = horizons.find((item) => item.id === horizonId);
+
+    if (!horizon) {
+      return dayjs().add(1, 'year').format('YYYY-MM-DD');
+    }
+
+    if (typeof horizon.yearsFrom === 'number') {
+      return dayjs().add(horizon.yearsFrom, 'year').format('YYYY-MM-DD');
+    }
+
+    if (typeof horizon.monthsFrom === 'number') {
+      return dayjs().add(horizon.monthsFrom, 'month').format('YYYY-MM-DD');
+    }
+
+    return dayjs().add(1, 'year').format('YYYY-MM-DD');
+  }
+
+  function openCreate(horizonId: string) {
+    setNewGoalHorizon(horizonId);
+    setNewGoalTargetDate(targetDateFromHorizon(horizonId));
+    setCreateOpen(true);
+  }
+
+  function openEditSteps() {
+    if (!selectedGoal) return;
+    setDraftSteps(getManualSteps(selectedGoal));
+    setNewStepTitle('');
+    setNewStepDescription('');
+    setEditOpen(true);
   }
 
   async function handleCreateGoal() {
@@ -346,19 +488,23 @@ export default function ProgressScreen({ navigation }: Props) {
 
     const targetDateIso = dayjs(newGoalTargetDate, 'YYYY-MM-DD', true).isValid()
       ? dayjs(newGoalTargetDate).endOf('day').toISOString()
-      : dayjs().add(90, 'day').endOf('day').toISOString();
+      : dayjs(targetDateFromHorizon(newGoalHorizon)).endOf('day').toISOString();
 
-    const newGoal: PsycheGoal = {
+    const now = new Date().toISOString();
+
+    const newGoal: AppGoal = {
       id: uid('goal'),
       title: trimmed,
       category: newGoalCategory,
       difficultyLevel: 1,
       targetDate: targetDateIso,
-      createdAt: new Date().toISOString(),
+      createdAt: now,
       why: '',
       answers: {},
       recommendation: {
         summary: 'Manuell im Fortschritt-Tab erstellt.',
+        todayFocus: '',
+        nextStep: '',
       },
       miniSteps: [],
       executionPlan: {
@@ -378,70 +524,17 @@ export default function ProgressScreen({ navigation }: Props) {
     const nextGoals = [newGoal, ...goals];
     await persistGoals(nextGoals);
 
+    setCreateOpen(false);
     setNewGoalTitle('');
     setNewGoalCategory('other');
-    setNewGoalTargetDate(dayjs().add(90, 'day').format('YYYY-MM-DD'));
+    setNewGoalTargetDate(dayjs().add(1, 'year').format('YYYY-MM-DD'));
     setSelectedGoalId(newGoal.id);
-  }
-
-  async function handleDeleteGoal(goalId: string) {
-    const nextGoals = goals.filter((goal) => goal.id !== goalId);
-    await persistGoals(nextGoals);
-    if (selectedGoalId === goalId) {
-      setSelectedGoalId(null);
-    }
-  }
-
-  async function handleAddManualStep() {
-    if (!selectedGoal) return;
-
-    const trimmed = newStepTitle.trim();
-    if (!trimmed) return;
-
-    const categoryMeta = getStepCategoryMeta(newStepCategory);
-    const currentSteps = getManualSteps(selectedGoal);
-
-    const newStep: ManualStep = {
-      id: uid('manual_step'),
-      order: currentSteps.length + 1,
-      title: trimmed,
-      description: trimmed,
-      note: newStepNote.trim(),
-      done: false,
-      status: 'active',
-      category: newStepCategory,
-      color: categoryMeta.color,
-      source: 'manual',
-    };
-
-    const nextManualSteps: ManualStep[] = [...currentSteps, newStep];
-
-    const nextGoal: PsycheGoal = {
-      ...selectedGoal,
-      manualSteps: nextManualSteps,
-      miniSteps:
-        !getAiSteps(selectedGoal).length
-          ? buildMiniStepsFromManual(nextManualSteps)
-          : selectedGoal.miniSteps,
-      progressPercent: computeGoalProgress({
-        ...selectedGoal,
-        manualSteps: nextManualSteps,
-      } as PsycheGoal),
-    };
-
-    const nextGoals = goals.map((goal) => (goal.id === selectedGoal.id ? nextGoal : goal));
-    await persistGoals(nextGoals);
-
-    setNewStepTitle('');
-    setNewStepNote('');
-    setNewStepCategory('focus');
   }
 
   async function handleToggleManualStep(stepId: string) {
     if (!selectedGoal) return;
 
-    const currentSteps = getManualSteps(selectedGoal);
-    const nextManualSteps: ManualStep[] = currentSteps.map((step) =>
+    const nextManualSteps: ManualStep[] = getManualSteps(selectedGoal).map((step) =>
       step.id === stepId
         ? {
             ...step,
@@ -451,44 +544,14 @@ export default function ProgressScreen({ navigation }: Props) {
         : step,
     );
 
-    const nextGoal: PsycheGoal = {
+    const nextGoal: AppGoal = {
       ...selectedGoal,
       manualSteps: nextManualSteps,
-      miniSteps:
-        !getAiSteps(selectedGoal).length
-          ? buildMiniStepsFromManual(nextManualSteps)
-          : selectedGoal.miniSteps,
+      miniSteps: buildMiniStepsFromManual(nextManualSteps),
       progressPercent: computeGoalProgress({
         ...selectedGoal,
         manualSteps: nextManualSteps,
-      } as PsycheGoal),
-    };
-
-    const nextGoals = goals.map((goal) => (goal.id === selectedGoal.id ? nextGoal : goal));
-    await persistGoals(nextGoals);
-  }
-
-  async function handleDeleteManualStep(stepId: string) {
-    if (!selectedGoal) return;
-
-    const nextManualSteps: ManualStep[] = getManualSteps(selectedGoal)
-      .filter((step) => step.id !== stepId)
-      .map((step, index) => ({
-        ...step,
-        order: index + 1,
-      }));
-
-    const nextGoal: PsycheGoal = {
-      ...selectedGoal,
-      manualSteps: nextManualSteps,
-      miniSteps:
-        !getAiSteps(selectedGoal).length
-          ? buildMiniStepsFromManual(nextManualSteps)
-          : selectedGoal.miniSteps,
-      progressPercent: computeGoalProgress({
-        ...selectedGoal,
-        manualSteps: nextManualSteps,
-      } as PsycheGoal),
+      }),
     };
 
     const nextGoals = goals.map((goal) => (goal.id === selectedGoal.id ? nextGoal : goal));
@@ -498,8 +561,9 @@ export default function ProgressScreen({ navigation }: Props) {
   async function handleToggleAiChecklist(stepId: string, itemId: string) {
     if (!selectedGoal || !selectedGoal.executionPlan) return;
 
-    const nextSteps = getAiSteps(selectedGoal).map((step) => {
+    const nextSteps: PlannerExecutionStep[] = getAiSteps(selectedGoal).map((step) => {
       if (step.id !== stepId) return step;
+
       return {
         ...step,
         checklist: (step.checklist ?? []).map((item) =>
@@ -508,7 +572,7 @@ export default function ProgressScreen({ navigation }: Props) {
       };
     });
 
-    const nextGoal: PsycheGoal = {
+    const nextGoal: AppGoal = {
       ...selectedGoal,
       executionPlan: {
         ...selectedGoal.executionPlan,
@@ -520,278 +584,635 @@ export default function ProgressScreen({ navigation }: Props) {
           ...selectedGoal.executionPlan,
           steps: nextSteps,
         },
-      } as PsycheGoal),
+      }),
     };
 
     const nextGoals = goals.map((goal) => (goal.id === selectedGoal.id ? nextGoal : goal));
     await persistGoals(nextGoals);
   }
 
-  function openGoal(goal: PsycheGoal) {
-    setSelectedGoalId(goal.id);
+  function handleDraftStepChange(id: string, field: 'title' | 'description', value: string) {
+    setDraftSteps((prev) =>
+      prev.map((step) => (step.id === id ? { ...step, [field]: value } : step)),
+    );
   }
 
-  const canNavigate = !!navigation?.navigate;
+  function handleMoveDraftStep(index: number, direction: -1 | 1) {
+    setDraftSteps((prev) => {
+      const nextIndex = index + direction;
+      if (nextIndex < 0 || nextIndex >= prev.length) return prev;
+
+      const cloned = [...prev];
+      const temp = cloned[index];
+      cloned[index] = cloned[nextIndex];
+      cloned[nextIndex] = temp;
+
+      return cloned.map((step, idx) => ({
+        ...step,
+        order: idx + 1,
+      }));
+    });
+  }
+
+  function handleDeleteDraftStep(id: string) {
+    setDraftSteps((prev) =>
+      prev
+        .filter((step) => step.id !== id)
+        .map((step, idx) => ({
+          ...step,
+          order: idx + 1,
+        })),
+    );
+  }
+
+  function handleAddDraftStep() {
+    const trimmed = newStepTitle.trim();
+    if (!trimmed) return;
+
+    const newStep: ManualStep = {
+      id: uid('manual_step'),
+      order: draftSteps.length + 1,
+      title: trimmed,
+      description: newStepDescription.trim() || trimmed,
+      done: false,
+      status: 'active',
+      source: 'manual',
+      linkedTodoTitles: [],
+      linkedHabitTitles: [],
+    };
+
+    setDraftSteps((prev) => [...prev, newStep]);
+    setNewStepTitle('');
+    setNewStepDescription('');
+  }
+
+  async function handleSaveDraftSteps() {
+    if (!selectedGoal) return;
+
+    const normalized = draftSteps.map((step, index) => ({
+      ...step,
+      order: index + 1,
+      status: toMiniStepStatus(!!step.done),
+    }));
+
+    const nextGoal: AppGoal = {
+      ...selectedGoal,
+      manualSteps: normalized,
+      miniSteps: buildMiniStepsFromManual(normalized),
+      progressPercent: computeGoalProgress({
+        ...selectedGoal,
+        manualSteps: normalized,
+      }),
+    };
+
+    const nextGoals = goals.map((goal) => (goal.id === selectedGoal.id ? nextGoal : goal));
+    await persistGoals(nextGoals);
+    setEditOpen(false);
+  }
+
+  async function handleDeleteGoal() {
+    if (!selectedGoal) return;
+
+    Alert.alert('Ziel löschen', 'Möchtest du dieses Ziel wirklich löschen?', [
+      { text: 'Abbrechen', style: 'cancel' },
+      {
+        text: 'Löschen',
+        style: 'destructive',
+        onPress: async () => {
+          const nextGoals = goals.filter((goal) => goal.id !== selectedGoal.id);
+          await persistGoals(nextGoals);
+          setSelectedGoalId(null);
+        },
+      },
+    ]);
+  }
 
   if (!selectedGoal) {
     return (
       <SafeAreaView style={styles.safe}>
-        <ScrollView contentContainerStyle={styles.content}>
-          <View style={styles.hero}>
-            <Text style={styles.kicker}>Fortschritt</Text>
-            <Text style={styles.title}>Ziele, Steps und Fortschritt. Ohne Spielerei.</Text>
-            <Text style={styles.subtitle}>
-              Direkt hier Ziele anlegen, kleine Steps farblich kategorisieren und sauber abhaken.
-            </Text>
-          </View>
+        <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+          <View style={styles.pageTitleCard}>
+            <Text style={styles.pageTitle}>Fortschritt</Text>
+            <Text style={styles.pageSubtitle}>Deine Ziele an einem Ort</Text>
 
-          <View style={styles.card}>
-            <Text style={styles.cardTitle}>Neues Ziel anlegen</Text>
-
-            <Text style={styles.label}>Zieltitel</Text>
-            <TextInput
-              value={newGoalTitle}
-              onChangeText={setNewGoalTitle}
-              placeholder="z. B. 2000 Elo erreichen / 8 kg abnehmen / Mondscheinsonate lernen"
-              placeholderTextColor="rgba(255,248,238,0.35)"
-              style={styles.input}
-            />
-
-            <Text style={styles.label}>Zielkategorie</Text>
-            <View style={styles.chipWrap}>
-              {GOAL_CATEGORIES.map((item) => {
-                const active = newGoalCategory === item.id;
-                return (
-                  <Pressable
-                    key={item.id}
-                    onPress={() => setNewGoalCategory(item.id)}
-                    style={[
-                      styles.categoryChip,
-                      {
-                        backgroundColor: active ? item.bg : 'rgba(255,248,238,0.06)',
-                        borderColor: active ? `${item.color}88` : BORDER,
-                      },
-                    ]}
-                  >
-                    <Text
-                      style={[
-                        styles.categoryChipText,
-                        { color: active ? item.color : TEXT },
-                      ]}
-                    >
-                      {item.label}
-                    </Text>
-                  </Pressable>
-                );
-              })}
-            </View>
-
-            <Text style={styles.label}>Zieldatum</Text>
-            <TextInput
-              value={newGoalTargetDate}
-              onChangeText={setNewGoalTargetDate}
-              placeholder="YYYY-MM-DD"
-              placeholderTextColor="rgba(255,248,238,0.35)"
-              style={styles.input}
-            />
-
-            <Pressable onPress={handleCreateGoal} style={styles.primaryBtn}>
-              <Text style={styles.primaryBtnText}>Ziel erstellen</Text>
+            <Pressable style={styles.manageMetaBtn} onPress={() => setManageMetaOpen(true)}>
+              <Text style={styles.manageMetaBtnText}>Zeiträume & Kategorien bearbeiten</Text>
             </Pressable>
           </View>
 
-          <View style={styles.card}>
-            <Text style={styles.cardTitle}>Alle Ziele</Text>
+          {[...horizons]
+            .sort((a, b) => a.order - b.order)
+            .map((section) => {
+              const items = groupedGoals[section.id] ?? [];
 
-            {!goals.length ? (
-              <Text style={styles.emptyText}>
-                Noch keine Ziele vorhanden. Lege oben dein erstes Ziel an.
-              </Text>
-            ) : (
-              goals.map((goal) => (
-                <View key={goal.id}>
-                  <GoalCard goal={goal} onOpen={() => openGoal(goal)} />
-                  <View style={styles.goalActionRow}>
-                    <Pressable onPress={() => openGoal(goal)} style={styles.secondaryBtn}>
-                      <Text style={styles.secondaryBtnText}>Öffnen</Text>
-                    </Pressable>
-
-                    {canNavigate ? (
-                      <Pressable
-                        onPress={() => navigation?.navigate?.('GoalDetail', { goalId: goal.id })}
-                        style={styles.secondaryBtn}
-                      >
-                        <Text style={styles.secondaryBtnText}>Detail</Text>
-                      </Pressable>
-                    ) : null}
-
-                    <Pressable
-                      onPress={() => handleDeleteGoal(goal.id)}
-                      style={styles.deleteBtn}
-                    >
-                      <Text style={styles.deleteBtnText}>Löschen</Text>
+              return (
+                <View key={section.id} style={styles.group}>
+                  <View style={styles.groupHeader}>
+                    <Text style={styles.groupTitle}>{section.title}</Text>
+                    <Pressable onPress={() => openCreate(section.id)} style={styles.groupPlus}>
+                      <Text style={styles.groupPlusText}>+</Text>
                     </Pressable>
                   </View>
+
+                  <View style={styles.groupList}>
+                    {items.length ? (
+                      items.map((goal) => (
+                        <GoalRow
+                          key={goal.id}
+                          goal={goal}
+                          horizons={horizons}
+                          onPress={() => setSelectedGoalId(goal.id)}
+                        />
+                      ))
+                    ) : (
+                      <Text style={styles.emptyText}>Kein Ziel</Text>
+                    )}
+                  </View>
                 </View>
-              ))
-            )}
-          </View>
+              );
+            })}
         </ScrollView>
+
+        <Pressable style={styles.fab} onPress={() => openCreate('oneYear')}>
+          <Text style={styles.fabText}>+</Text>
+        </Pressable>
+
+        <Modal visible={createOpen} animationType="slide" transparent onRequestClose={() => setCreateOpen(false)}>
+          <View style={styles.modalBackdrop}>
+            <View style={styles.sheet}>
+              <Text style={styles.sheetTitle}>Neues Ziel</Text>
+
+              <Text style={styles.label}>Titel</Text>
+              <TextInput
+                value={newGoalTitle}
+                onChangeText={setNewGoalTitle}
+                placeholder="Ziel eingeben"
+                placeholderTextColor={MUTED}
+                style={styles.input}
+              />
+
+              <Text style={styles.label}>Datum</Text>
+              <TextInput
+                value={newGoalTargetDate}
+                onChangeText={setNewGoalTargetDate}
+                placeholder="YYYY-MM-DD"
+                placeholderTextColor={MUTED}
+                style={styles.input}
+              />
+
+              <Text style={styles.label}>Zeitraum</Text>
+              <View style={styles.pillRow}>
+                {[...horizons]
+                  .sort((a, b) => a.order - b.order)
+                  .map((item) => {
+                    const active = newGoalHorizon === item.id;
+                    return (
+                      <Pressable
+                        key={item.id}
+                        onPress={() => {
+                          setNewGoalHorizon(item.id);
+                          setNewGoalTargetDate(targetDateFromHorizon(item.id));
+                        }}
+                        style={[styles.pill, active && styles.pillActive]}
+                      >
+                        <Text style={[styles.pillText, active && styles.pillTextActive]}>{item.title}</Text>
+                      </Pressable>
+                    );
+                  })}
+              </View>
+
+              <Text style={styles.label}>Kategorie</Text>
+              <View style={styles.pillRow}>
+                {[...goalCategories]
+                  .sort((a, b) => a.order - b.order)
+                  .map((item) => {
+                    const active = newGoalCategory === item.id;
+                    return (
+                      <Pressable
+                        key={item.id}
+                        onPress={() => setNewGoalCategory(item.id)}
+                        style={[styles.pill, active && styles.pillActive]}
+                      >
+                        <Text style={[styles.pillText, active && styles.pillTextActive]}>{item.title}</Text>
+                      </Pressable>
+                    );
+                  })}
+              </View>
+
+              <View style={styles.modalActions}>
+                <Pressable style={styles.secondaryBtn} onPress={() => setCreateOpen(false)}>
+                  <Text style={styles.secondaryBtnText}>Abbrechen</Text>
+                </Pressable>
+                <Pressable style={styles.primaryBtn} onPress={handleCreateGoal}>
+                  <Text style={styles.primaryBtnText}>Erstellen</Text>
+                </Pressable>
+              </View>
+            </View>
+          </View>
+        </Modal>
+
+        <Modal
+          visible={manageMetaOpen}
+          animationType="slide"
+          transparent
+          onRequestClose={() => setManageMetaOpen(false)}
+        >
+          <View style={styles.modalBackdrop}>
+            <View style={styles.sheet}>
+              <Text style={styles.sheetTitle}>Zeiträume & Kategorien</Text>
+
+              <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.editList}>
+                <Text style={styles.label}>Zeiträume</Text>
+
+                {[...horizons]
+                  .sort((a, b) => a.order - b.order)
+                  .map((item, index) => (
+                    <View key={item.id} style={styles.editCard}>
+                      {editingHorizonId === item.id ? (
+                        <>
+                          <TextInput
+                            value={editingHorizonTitle}
+                            onChangeText={setEditingHorizonTitle}
+                            placeholder="Zeitraum"
+                            placeholderTextColor={MUTED}
+                            style={styles.input}
+                          />
+
+                          <View style={styles.editActionsRow}>
+                            <Pressable style={styles.smallBtn} onPress={handleRenameHorizon}>
+                              <Text style={styles.smallBtnText}>✓</Text>
+                            </Pressable>
+
+                            <Pressable
+                              style={styles.smallBtn}
+                              onPress={() => {
+                                setEditingHorizonId(null);
+                                setEditingHorizonTitle('');
+                              }}
+                            >
+                              <Text style={styles.smallBtnText}>✕</Text>
+                            </Pressable>
+                          </View>
+                        </>
+                      ) : (
+                        <>
+                          <Text style={styles.inputStaticText}>{item.title}</Text>
+                          <Text style={styles.inputStaticSubtext}>
+                            {typeof item.yearsFrom === 'number'
+                              ? `${item.yearsFrom} Jahre`
+                              : `${item.monthsFrom ?? 0} Monate`}
+                          </Text>
+
+                          <View style={styles.editActionsRow}>
+                            <Pressable
+                              style={styles.smallBtn}
+                              onPress={() => {
+                                setEditingHorizonId(item.id);
+                                setEditingHorizonTitle(item.title);
+                              }}
+                            >
+                              <Text style={styles.smallBtnText}>✎</Text>
+                            </Pressable>
+
+                            <Pressable
+                              style={styles.smallBtn}
+                              onPress={() => {
+                                if (index === 0) return;
+                                const ordered = [...horizons].sort((a, b) => a.order - b.order);
+                                [ordered[index - 1], ordered[index]] = [ordered[index], ordered[index - 1]];
+                                void persistHorizons(ordered);
+                              }}
+                            >
+                              <Text style={styles.smallBtnText}>↑</Text>
+                            </Pressable>
+
+                            <Pressable
+                              style={styles.smallBtn}
+                              onPress={() => {
+                                const ordered = [...horizons].sort((a, b) => a.order - b.order);
+                                if (index === ordered.length - 1) return;
+                                [ordered[index + 1], ordered[index]] = [ordered[index], ordered[index + 1]];
+                                void persistHorizons(ordered);
+                              }}
+                            >
+                              <Text style={styles.smallBtnText}>↓</Text>
+                            </Pressable>
+
+                            <Pressable
+                              style={styles.smallBtnDanger}
+                              onPress={() => handleDeleteHorizon(item.id)}
+                            >
+                              <Text style={styles.smallBtnDangerText}>Löschen</Text>
+                            </Pressable>
+                          </View>
+                        </>
+                      )}
+                    </View>
+                  ))}
+
+                <View style={styles.addCard}>
+                  <Text style={styles.label}>Neuen Zeitraum anlegen</Text>
+
+                  <TextInput
+                    value={newHorizonTitle}
+                    onChangeText={setNewHorizonTitle}
+                    placeholder="z. B. 3 Jahres Ziele"
+                    placeholderTextColor={MUTED}
+                    style={styles.input}
+                  />
+
+                  <TextInput
+                    value={newHorizonYears}
+                    onChangeText={setNewHorizonYears}
+                    placeholder="Jahre optional"
+                    placeholderTextColor={MUTED}
+                    style={styles.input}
+                    keyboardType="numeric"
+                  />
+
+                  <TextInput
+                    value={newHorizonMonths}
+                    onChangeText={setNewHorizonMonths}
+                    placeholder="Monate optional"
+                    placeholderTextColor={MUTED}
+                    style={styles.input}
+                    keyboardType="numeric"
+                  />
+
+                  <Pressable
+                    style={styles.secondaryBtn}
+                    onPress={async () => {
+                      const trimmed = newHorizonTitle.trim();
+                      if (!trimmed) return;
+
+                      const years = newHorizonYears.trim() ? Number(newHorizonYears) : undefined;
+                      const months = newHorizonMonths.trim() ? Number(newHorizonMonths) : undefined;
+
+                      const newItem: CustomHorizon = {
+                        id: uid('horizon'),
+                        title: trimmed,
+                        yearsFrom: Number.isFinite(years as number) ? years : undefined,
+                        monthsFrom: Number.isFinite(months as number) ? months : undefined,
+                        order: horizons.length + 1,
+                      };
+
+                      await persistHorizons([...horizons, newItem]);
+                      setNewHorizonTitle('');
+                      setNewHorizonYears('');
+                      setNewHorizonMonths('');
+                    }}
+                  >
+                    <Text style={styles.secondaryBtnText}>Zeitraum hinzufügen</Text>
+                  </Pressable>
+                </View>
+
+                <Text style={[styles.label, { marginTop: 18 }]}>Kategorien</Text>
+
+                {[...goalCategories]
+                  .sort((a, b) => a.order - b.order)
+                  .map((item, index) => (
+                    <View key={item.id} style={styles.editCard}>
+                      {editingCategoryId === item.id ? (
+                        <>
+                          <TextInput
+                            value={editingCategoryTitle}
+                            onChangeText={setEditingCategoryTitle}
+                            placeholder="Kategorie"
+                            placeholderTextColor={MUTED}
+                            style={styles.input}
+                          />
+
+                          <View style={styles.editActionsRow}>
+                            <Pressable style={styles.smallBtn} onPress={handleRenameCategory}>
+                              <Text style={styles.smallBtnText}>✓</Text>
+                            </Pressable>
+
+                            <Pressable
+                              style={styles.smallBtn}
+                              onPress={() => {
+                                setEditingCategoryId(null);
+                                setEditingCategoryTitle('');
+                              }}
+                            >
+                              <Text style={styles.smallBtnText}>✕</Text>
+                            </Pressable>
+                          </View>
+                        </>
+                      ) : (
+                        <>
+                          <Text style={styles.inputStaticText}>{item.title}</Text>
+
+                          <View style={styles.editActionsRow}>
+                            <Pressable
+                              style={styles.smallBtn}
+                              onPress={() => {
+                                setEditingCategoryId(item.id);
+                                setEditingCategoryTitle(item.title);
+                              }}
+                            >
+                              <Text style={styles.smallBtnText}>✎</Text>
+                            </Pressable>
+
+                            <Pressable
+                              style={styles.smallBtn}
+                              onPress={() => {
+                                if (index === 0) return;
+                                const ordered = [...goalCategories].sort((a, b) => a.order - b.order);
+                                [ordered[index - 1], ordered[index]] = [ordered[index], ordered[index - 1]];
+                                void persistGoalCategories(ordered);
+                              }}
+                            >
+                              <Text style={styles.smallBtnText}>↑</Text>
+                            </Pressable>
+
+                            <Pressable
+                              style={styles.smallBtn}
+                              onPress={() => {
+                                const ordered = [...goalCategories].sort((a, b) => a.order - b.order);
+                                if (index === ordered.length - 1) return;
+                                [ordered[index + 1], ordered[index]] = [ordered[index], ordered[index + 1]];
+                                void persistGoalCategories(ordered);
+                              }}
+                            >
+                              <Text style={styles.smallBtnText}>↓</Text>
+                            </Pressable>
+
+                            <Pressable
+                              style={styles.smallBtnDanger}
+                              onPress={() => handleDeleteCategory(item.id)}
+                            >
+                              <Text style={styles.smallBtnDangerText}>Löschen</Text>
+                            </Pressable>
+                          </View>
+                        </>
+                      )}
+                    </View>
+                  ))}
+
+                <View style={styles.addCard}>
+                  <Text style={styles.label}>Neue Kategorie anlegen</Text>
+
+                  <TextInput
+                    value={newCategoryTitle}
+                    onChangeText={setNewCategoryTitle}
+                    placeholder="z. B. Finanzen"
+                    placeholderTextColor={MUTED}
+                    style={styles.input}
+                  />
+
+                  <Pressable
+                    style={styles.secondaryBtn}
+                    onPress={async () => {
+                      const trimmed = newCategoryTitle.trim();
+                      if (!trimmed) return;
+
+                      const newItem: CustomGoalCategory = {
+                        id: uid('category'),
+                        title: trimmed,
+                        order: goalCategories.length + 1,
+                      };
+
+                      await persistGoalCategories([...goalCategories, newItem]);
+                      setNewCategoryTitle('');
+                    }}
+                  >
+                    <Text style={styles.secondaryBtnText}>Kategorie hinzufügen</Text>
+                  </Pressable>
+                </View>
+              </ScrollView>
+
+              <View style={styles.modalActions}>
+                <Pressable style={styles.primaryBtn} onPress={() => setManageMetaOpen(false)}>
+                  <Text style={styles.primaryBtnText}>Fertig</Text>
+                </Pressable>
+              </View>
+            </View>
+          </View>
+        </Modal>
       </SafeAreaView>
     );
   }
 
-  const progress = computeGoalProgress(selectedGoal);
-  const manualSteps = getManualSteps(selectedGoal);
-  const aiSteps = getAiSteps(selectedGoal);
-  const goalMeta = getGoalCategoryMeta(String(selectedGoal.category));
-
   return (
     <SafeAreaView style={styles.safe}>
-      <ScrollView contentContainerStyle={styles.content}>
+      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
         <Pressable onPress={() => setSelectedGoalId(null)} style={styles.backBtn}>
-          <Text style={styles.backBtnText}>← Zur Übersicht</Text>
+          <Text style={styles.backBtnText}>← Fortschritt</Text>
         </Pressable>
 
-        <View style={styles.hero}>
-          <View style={styles.heroTopMeta}>
-            <View
-              style={[
-                styles.goalTypeBadge,
-                {
-                  backgroundColor: goalMeta.bg,
-                  borderColor: `${goalMeta.color}55`,
-                },
-              ]}
-            >
-              <Text style={[styles.goalTypeBadgeText, { color: goalMeta.color }]}>
-                {goalMeta.label}
-              </Text>
-            </View>
-            <Text style={styles.heroPercent}>{progress}%</Text>
-          </View>
+        <Text style={styles.detailTitle}>Step by Step</Text>
 
-          <Text style={styles.title}>{selectedGoal.title}</Text>
-          <Text style={styles.subtitle}>
-            Ziel bis {dayjs(selectedGoal.targetDate).format('DD.MM.YYYY')} · {manualSteps.length}{' '}
-            eigene Steps · {aiSteps.length} KI-Phasen
-          </Text>
-
-          <GoalProgressBar value={progress} />
-        </View>
-
-        <View style={styles.card}>
-          <Text style={styles.cardTitle}>Eigenen Step hinzufügen</Text>
-
-          <Text style={styles.label}>Step</Text>
-          <TextInput
-            value={newStepTitle}
-            onChangeText={setNewStepTitle}
-            placeholder="z. B. 20 kritische Schachstellungen analysieren"
-            placeholderTextColor="rgba(255,248,238,0.35)"
-            style={styles.input}
-          />
-
-          <Text style={styles.label}>Kurze Notiz</Text>
-          <TextInput
-            value={newStepNote}
-            onChangeText={setNewStepNote}
-            placeholder="z. B. mit Kandidatenzug-Protokoll"
-            placeholderTextColor="rgba(255,248,238,0.35)"
-            style={styles.input}
-          />
-
-          <Text style={styles.label}>Kategorie</Text>
-          <View style={styles.chipWrap}>
-            {STEP_CATEGORIES.map((item) => {
-              const active = newStepCategory === item.id;
-              return (
-                <Pressable
-                  key={item.id}
-                  onPress={() => setNewStepCategory(item.id)}
-                  style={[
-                    styles.categoryChip,
-                    {
-                      backgroundColor: active ? item.bg : 'rgba(255,248,238,0.06)',
-                      borderColor: active ? `${item.color}88` : BORDER,
-                    },
-                  ]}
-                >
-                  <Text
-                    style={[
-                      styles.categoryChipText,
-                      { color: active ? item.color : TEXT },
-                    ]}
-                  >
-                    {item.label}
-                  </Text>
-                </Pressable>
-              );
-            })}
-          </View>
-
-          <Pressable onPress={handleAddManualStep} style={styles.primaryBtn}>
-            <Text style={styles.primaryBtnText}>Step hinzufügen</Text>
-          </Pressable>
-        </View>
-
-        <View style={styles.card}>
-          <Text style={styles.cardTitle}>Eigene kleine Steps</Text>
-
-          {!manualSteps.length ? (
-            <Text style={styles.emptyText}>
-              Noch keine eigenen Steps. Lege oben deine ersten kleinen Schritte an.
-            </Text>
-          ) : (
-            manualSteps.map((step) => (
-              <ManualStepRow
+<View style={styles.stepsWrap}>
+          {visibleSteps.length ? (
+            visibleSteps.map((step) => (
+              <StepRow
                 key={step.id}
-                step={step}
-                onToggle={() => handleToggleManualStep(step.id)}
-                onDelete={() => handleDeleteManualStep(step.id)}
+                title={step.title}
+                description={step.description}
+                done={step.done}
+                onToggle={() => {
+                  if (step.type === 'manual') {
+                    void handleToggleManualStep(step.id);
+                  } else {
+                    void handleToggleAiChecklist(step.stepId, step.itemId);
+                  }
+                }}
               />
             ))
+          ) : (
+            <Text style={styles.emptyText}>Noch keine Steps vorhanden.</Text>
           )}
         </View>
 
-        {!!aiSteps.length && (
-          <View style={styles.card}>
-            <Text style={styles.cardTitle}>KI-Plan</Text>
-            <Text style={styles.smallMuted}>
-              Der KI-Plan bleibt als strukturierte Liste erhalten. Kein Grafikpfad mehr.
-            </Text>
-
-            {aiSteps.map((step, index) => (
-              <View
-                key={step.id}
-                style={[styles.aiStepCard, isAiStepComplete(step) && styles.aiStepCardDone]}
-              >
-                <View style={styles.aiStepTop}>
-                  <Text style={styles.aiStepIndex}>
-                    PHASE {String(index + 1).padStart(2, '0')}
-                  </Text>
-                  <Text style={styles.aiStepState}>
-                    {isAiStepComplete(step) ? 'Erledigt' : 'Aktiv'}
-                  </Text>
-                </View>
-
-                <Text style={styles.aiStepTitle}>{step.title}</Text>
-                <Text style={styles.aiStepText}>{step.explanation}</Text>
-
-                <View style={styles.aiChecklistWrap}>
-                  {(step.checklist ?? []).map((item) => (
-                    <AiChecklistRow
-                      key={item.id}
-                      item={item}
-                      onToggle={() => handleToggleAiChecklist(step.id, item.id)}
-                    />
-                  ))}
-                </View>
-              </View>
-            ))}
-          </View>
-        )}
+        <Pressable style={styles.deleteGoalBtn} onPress={handleDeleteGoal}>
+          <Text style={styles.deleteGoalBtnText}>Ziel löschen</Text>
+        </Pressable>
       </ScrollView>
+
+      <Pressable style={styles.editFab} onPress={openEditSteps}>
+        <Text style={styles.editFabText}>Bearbeiten</Text>
+      </Pressable>
+
+      <Modal visible={editOpen} animationType="slide" transparent onRequestClose={() => setEditOpen(false)}>
+        <View style={styles.modalBackdrop}>
+          <View style={styles.sheet}>
+            <Text style={styles.sheetTitle}>Steps bearbeiten</Text>
+
+            <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.editList}>
+              {draftSteps.map((step, index) => (
+                <View key={step.id} style={styles.editCard}>
+                  <Text style={styles.label}>Step</Text>
+                  <TextInput
+                    value={step.title}
+                    onChangeText={(value) => handleDraftStepChange(step.id, 'title', value)}
+                    placeholder="Step"
+                    placeholderTextColor={MUTED}
+                    style={styles.input}
+                  />
+
+                  <Text style={styles.label}>Beschreibung</Text>
+                  <TextInput
+                    value={step.description ?? ''}
+                    onChangeText={(value) => handleDraftStepChange(step.id, 'description', value)}
+                    placeholder="Beschreibung"
+                    placeholderTextColor={MUTED}
+                    style={[styles.input, styles.textarea]}
+                    multiline
+                  />
+
+                  <View style={styles.editActionsRow}>
+                    <Pressable style={styles.smallBtn} onPress={() => handleMoveDraftStep(index, -1)}>
+                      <Text style={styles.smallBtnText}>↑</Text>
+                    </Pressable>
+
+                    <Pressable style={styles.smallBtn} onPress={() => handleMoveDraftStep(index, 1)}>
+                      <Text style={styles.smallBtnText}>↓</Text>
+                    </Pressable>
+
+                    <Pressable style={styles.smallBtnDanger} onPress={() => handleDeleteDraftStep(step.id)}>
+                      <Text style={styles.smallBtnDangerText}>Löschen</Text>
+                    </Pressable>
+                  </View>
+                </View>
+              ))}
+
+              <View style={styles.addCard}>
+                <Text style={styles.label}>Neuer Step</Text>
+                <TextInput
+                  value={newStepTitle}
+                  onChangeText={setNewStepTitle}
+                  placeholder="Titel"
+                  placeholderTextColor={MUTED}
+                  style={styles.input}
+                />
+
+                <Text style={styles.label}>Beschreibung</Text>
+                <TextInput
+                  value={newStepDescription}
+                  onChangeText={setNewStepDescription}
+                  placeholder="Beschreibung"
+                  placeholderTextColor={MUTED}
+                  style={[styles.input, styles.textarea]}
+                  multiline
+                />
+
+                <Pressable style={styles.secondaryBtn} onPress={handleAddDraftStep}>
+                  <Text style={styles.secondaryBtnText}>Step hinzufügen</Text>
+                </Pressable>
+              </View>
+            </ScrollView>
+
+            <View style={styles.modalActions}>
+              <Pressable style={styles.secondaryBtn} onPress={() => setEditOpen(false)}>
+                <Text style={styles.secondaryBtnText}>Abbrechen</Text>
+              </Pressable>
+              <Pressable style={styles.primaryBtn} onPress={handleSaveDraftSteps}>
+                <Text style={styles.primaryBtnText}>Speichern</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -801,380 +1222,411 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: BG,
   },
+
   content: {
-    padding: 18,
+    paddingHorizontal: 20,
+    paddingTop: 18,
     paddingBottom: 120,
-    gap: 16,
   },
-  hero: {
-    backgroundColor: BG_SOFT,
-    borderRadius: 24,
-    padding: 18,
-    borderWidth: 1,
-    borderColor: BORDER,
+
+  pageTitle: {
+    color: TEXT,
+    fontSize: 30,
+    fontWeight: '800',
   },
-  heroTopMeta: {
+
+  group: {
+    marginBottom: 24,
+  },
+  groupHeader: {
     flexDirection: 'row',
+    alignItems: 'center',
     justifyContent: 'space-between',
-    alignItems: 'center',
+    marginBottom: 10,
   },
-  heroPercent: {
-    color: GOLD,
-    fontSize: 22,
-    fontWeight: '900',
-  },
-  kicker: {
-    color: GOLD,
-    fontSize: 12,
-    fontWeight: '900',
-    letterSpacing: 1.2,
-    textTransform: 'uppercase',
-  },
-  title: {
-    color: TEXT,
-    fontSize: 28,
-    fontWeight: '900',
-    marginTop: 8,
-  },
-  subtitle: {
+  groupTitle: {
     color: MUTED,
-    fontSize: 14,
-    lineHeight: 22,
-    marginTop: 10,
-  },
-  card: {
-    backgroundColor: CARD,
-    borderRadius: 24,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: BORDER,
-  },
-  cardTitle: {
-    color: TEXT,
-    fontSize: 18,
-    fontWeight: '900',
-  },
-  label: {
-    color: GOLD,
-    fontSize: 12,
-    fontWeight: '900',
-    marginTop: 14,
-    marginBottom: 8,
-    letterSpacing: 1,
-    textTransform: 'uppercase',
-  },
-  input: {
-    backgroundColor: 'rgba(255,248,238,0.06)',
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: BORDER,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    color: TEXT,
     fontSize: 15,
-    lineHeight: 22,
+    fontWeight: '600',
   },
-  chipWrap: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-  },
-  categoryChip: {
+  groupPlus: {
+    width: 28,
+    height: 28,
     borderRadius: 999,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    borderWidth: 1,
-  },
-  categoryChipText: {
-    fontWeight: '800',
-    fontSize: 13,
-  },
-  primaryBtn: {
-    marginTop: 16,
-    borderRadius: 16,
-    backgroundColor: GOLD,
-    paddingVertical: 14,
     alignItems: 'center',
-  },
-  primaryBtnText: {
-    color: '#1A120D',
-    fontWeight: '900',
-    fontSize: 15,
-  },
-  secondaryBtn: {
-    flex: 1,
-    borderRadius: 14,
-    backgroundColor: 'rgba(255,248,238,0.08)',
-    paddingVertical: 12,
-    alignItems: 'center',
-  },
-  secondaryBtnText: {
-    color: TEXT,
-    fontWeight: '800',
-    fontSize: 14,
-  },
-  deleteBtn: {
-    borderRadius: 14,
-    backgroundColor: 'rgba(255,143,143,0.14)',
-    paddingHorizontal: 18,
     justifyContent: 'center',
+    backgroundColor: ACCENT_SOFT,
+  },
+  groupPlusText: {
+    color: ACCENT,
+    fontSize: 18,
+    fontWeight: '600',
+    marginTop: -1,
+  },
+
+  groupList: {
+    backgroundColor: SURFACE,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: BORDER,
+    overflow: 'hidden',
+  },
+
+  goalRowBar: {
+    width: 3,
+    alignSelf: 'stretch',
+    borderRadius: 999,
+    marginRight: 12,
+  },
+  goalRow: {
+    minHeight: 56,
+    paddingLeft: 6,
+    paddingRight: 16,
+    paddingVertical: 14,
+    flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'space-between',
+    borderBottomWidth: 1,
+    borderBottomColor: BORDER,
   },
-  deleteBtnText: {
-    color: RED,
-    fontWeight: '800',
-    fontSize: 14,
+  goalRowTitle: {
+    flex: 1,
+    color: TEXT,
+    fontSize: 16,
+    fontWeight: '500',
+    paddingRight: 12,
   },
+  goalRowPercent: {
+    color: ACCENT,
+    fontSize: 15,
+    fontWeight: '700',
+  },
+
   emptyText: {
     color: MUTED,
     fontSize: 14,
-    lineHeight: 22,
-    marginTop: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 16,
   },
-  smallMuted: {
-    color: MUTED,
-    fontSize: 13,
-    lineHeight: 20,
-    marginTop: 8,
-  },
-  goalCard: {
-    marginTop: 14,
-    borderRadius: 20,
-    backgroundColor: CARD_LIGHT,
-    padding: 14,
-    borderWidth: 1,
-    borderColor: BORDER,
-  },
-  goalTopRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  goalTopMetaRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  goalTinyMeta: {
-    color: MUTED,
-    fontSize: 11,
-    fontWeight: '700',
-  },
-  goalTypeBadge: {
-    borderRadius: 999,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderWidth: 1,
-    alignSelf: 'flex-start',
-  },
-  goalTypeBadgeText: {
-    fontSize: 11,
-    fontWeight: '900',
-  },
-  goalTitle: {
-    color: TEXT,
-    fontSize: 17,
-    fontWeight: '900',
-    marginTop: 8,
-  },
-  goalMeta: {
-    color: MUTED,
-    fontSize: 12,
-    marginTop: 4,
-  },
-  goalPercent: {
-    color: GOLD,
-    fontSize: 20,
-    fontWeight: '900',
-  },
-  goalActionRow: {
-    flexDirection: 'row',
-    gap: 10,
-    marginTop: 10,
-    marginBottom: 4,
-  },
-  progressTrack: {
-    height: 10,
-    borderRadius: 999,
-    backgroundColor: 'rgba(255,248,238,0.12)',
-    overflow: 'hidden',
-    marginTop: 12,
-  },
-  progressFill: {
-    height: '100%',
-    borderRadius: 999,
-    backgroundColor: GREEN,
-  },
+
   backBtn: {
     alignSelf: 'flex-start',
-    backgroundColor: 'rgba(255,248,238,0.08)',
-    borderRadius: 999,
-    paddingHorizontal: 14,
-    paddingVertical: 9,
+    marginBottom: 16,
   },
   backBtnText: {
-    color: TEXT,
-    fontWeight: '800',
-    fontSize: 13,
+    color: ACCENT,
+    fontSize: 15,
+    fontWeight: '600',
   },
-  stepRowWrap: {
-    marginTop: 12,
-    flexDirection: 'row',
-    alignItems: 'stretch',
-    gap: 8,
-  },
-  stepAccent: {
-    width: 6,
-    borderRadius: 999,
-  },
-  stepRow: {
-    flex: 1,
+
+  stepsWrap: {
+    backgroundColor: SURFACE,
     borderRadius: 18,
-    backgroundColor: CARD_DARK,
-    padding: 14,
     borderWidth: 1,
     borderColor: BORDER,
+    paddingVertical: 4,
+  },
+
+  stepRow: {
     flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
+    alignItems: 'flex-start',
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: BORDER,
   },
-  stepRowDone: {
-    backgroundColor: 'rgba(126,219,122,0.10)',
-    borderColor: 'rgba(126,219,122,0.18)',
-  },
-  stepMain: {
-    flex: 1,
-  },
-  stepTopLine: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  stepCategoryBadge: {
-    borderRadius: 999,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderWidth: 1,
-  },
-  stepCategoryText: {
-    fontSize: 11,
-    fontWeight: '900',
-  },
-  stepStateText: {
-    color: MUTED,
-    fontSize: 11,
-    fontWeight: '800',
-  },
-  stepTitle: {
-    color: TEXT,
-    fontSize: 15,
-    fontWeight: '900',
-    marginTop: 8,
-  },
-  stepTitleDone: {
-    color: GREEN,
-  },
-  stepNote: {
-    color: MUTED,
-    fontSize: 13,
-    lineHeight: 19,
-    marginTop: 6,
-  },
-  stepNoteDone: {
-    color: 'rgba(126,219,122,0.82)',
-  },
-  deleteMiniBtn: {
-    borderRadius: 14,
-    backgroundColor: 'rgba(255,143,143,0.14)',
-    paddingHorizontal: 12,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  deleteMiniBtnText: {
-    color: RED,
-    fontWeight: '800',
-    fontSize: 12,
-  },
-  checkCircle: {
+  check: {
     width: 24,
     height: 24,
     borderRadius: 999,
-    borderWidth: 2,
-    borderColor: 'rgba(255,248,238,0.28)',
+    borderWidth: 1.5,
+    borderColor: ACCENT,
+    marginRight: 12,
+    marginTop: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: SURFACE,
+  },
+  checkDone: {
+    backgroundColor: ACCENT_SOFT,
+  },
+  checkMark: {
+    color: ACCENT,
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  stepTextWrap: {
+    flex: 1,
+  },
+  stepTitle: {
+    color: TEXT,
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  stepTitleDone: {
+    opacity: 0.7,
+  },
+  stepDescription: {
+    color: MUTED,
+    fontSize: 14,
+    lineHeight: 20,
+    marginTop: 4,
+  },
+
+  fab: {
+    position: 'absolute',
+    right: 20,
+    bottom: 33,
+    width: 56,
+    height: 56,
+    borderRadius: 999,
+    backgroundColor: ACCENT,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOpacity: 0.12,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 6,
+  },
+  fabText: {
+    color: '#FFFFFF',
+    fontSize: 30,
+    fontWeight: '500',
+    marginTop: -2,
+  },
+
+  editFab: {
+    position: 'absolute',
+    right: 20,
+    bottom: 64,
+    paddingHorizontal: 16,
+    height: 42,
+    borderRadius: 999,
+    backgroundColor: ACCENT,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOpacity: 0.12,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 6,
+  },
+  editFabText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+
+  deleteGoalBtn: {
+    marginTop: 18,
+    alignSelf: 'flex-start',
+  },
+  deleteGoalBtnText: {
+    color: DANGER,
+    fontSize: 14,
+    fontWeight: '600',
+  },
+
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(5,10,24,0.42)',
+    justifyContent: 'flex-end',
+  },
+  sheet: {
+    maxHeight: '88%',
+    backgroundColor: SURFACE,
+    borderTopLeftRadius: 26,
+    borderTopRightRadius: 26,
+    paddingHorizontal: 20,
+    paddingTop: 18,
+    paddingBottom: 28,
+  },
+  sheetTitle: {
+    color: TEXT,
+    fontSize: 22,
+    fontWeight: '800',
+    marginBottom: 18,
+  },
+
+  label: {
+    color: MUTED,
+    fontSize: 13,
+    fontWeight: '600',
+    marginBottom: 8,
+  },
+  input: {
+    backgroundColor: SURFACE_SOFT,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: BORDER,
+    color: TEXT,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    fontSize: 15,
+    marginBottom: 14,
+  },
+  textarea: {
+    minHeight: 84,
+    textAlignVertical: 'top',
+  },
+
+  pillRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginBottom: 14,
+  },
+  pill: {
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    borderRadius: 999,
+    backgroundColor: SURFACE_SOFT,
+    borderWidth: 1,
+    borderColor: BORDER,
+  },
+  pillActive: {
+    backgroundColor: ACCENT_SOFT,
+    borderColor: '#C8D7FF',
+  },
+  pillText: {
+    color: TEXT,
+    fontSize: 13,
+    fontWeight: '500',
+  },
+  pillTextActive: {
+    color: ACCENT,
+    fontWeight: '700',
+  },
+
+  modalActions: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 8,
+  },
+  primaryBtn: {
+    flex: 1,
+    height: 48,
+    borderRadius: 14,
+    backgroundColor: ACCENT,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  checkCircleDone: {
-    backgroundColor: GREEN,
-    borderColor: GREEN,
+  primaryBtnText: {
+    color: '#FFFFFF',
+    fontSize: 15,
+    fontWeight: '700',
   },
-  checkMark: {
-    color: '#183117',
-    fontWeight: '900',
-  },
-  aiStepCard: {
-    marginTop: 12,
-    borderRadius: 18,
-    padding: 14,
-    backgroundColor: CARD_DARK,
+  secondaryBtn: {
+    flex: 1,
+    height: 48,
+    borderRadius: 14,
+    backgroundColor: SURFACE_SOFT,
     borderWidth: 1,
     borderColor: BORDER,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  aiStepCardDone: {
-    borderColor: 'rgba(126,219,122,0.20)',
-    backgroundColor: 'rgba(126,219,122,0.08)',
+  secondaryBtnText: {
+    color: TEXT,
+    fontSize: 15,
+    fontWeight: '600',
   },
-  aiStepTop: {
+
+  editList: {
+    paddingBottom: 12,
+  },
+  editCard: {
+    backgroundColor: SURFACE_SOFT,
+    borderRadius: 16,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: BORDER,
+    marginBottom: 12,
+  },
+  editActionsRow: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
+    gap: 8,
   },
-  aiStepIndex: {
-    color: GOLD,
-    fontSize: 12,
-    fontWeight: '900',
+  smallBtn: {
+    minWidth: 44,
+    height: 40,
+    borderRadius: 12,
+    backgroundColor: SURFACE,
+    borderWidth: 1,
+    borderColor: BORDER,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  aiStepState: {
-    color: MUTED,
-    fontSize: 12,
-    fontWeight: '800',
-  },
-  aiStepTitle: {
+  smallBtnText: {
     color: TEXT,
     fontSize: 16,
-    fontWeight: '900',
-    marginTop: 8,
+    fontWeight: '700',
   },
-  aiStepText: {
-    color: MUTED,
-    fontSize: 14,
-    lineHeight: 21,
-    marginTop: 8,
-  },
-  aiChecklistWrap: {
-    gap: 10,
-    marginTop: 14,
-  },
-  aiCheckRow: {
-    flexDirection: 'row',
+  smallBtnDanger: {
+    flex: 1,
+    height: 40,
+    borderRadius: 12,
+    backgroundColor: 'rgba(255,143,143,0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,143,143,0.22)',
     alignItems: 'center',
-    gap: 12,
-    borderRadius: 14,
-    padding: 12,
-    backgroundColor: 'rgba(255,248,238,0.06)',
+    justifyContent: 'center',
+  },
+  smallBtnDangerText: {
+    color: DANGER,
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  addCard: {
+    backgroundColor: SURFACE_SOFT,
+    borderRadius: 16,
+    padding: 14,
     borderWidth: 1,
     borderColor: BORDER,
+    marginTop: 4,
   },
-  aiCheckRowDone: {
-    backgroundColor: 'rgba(126,219,122,0.12)',
-    borderColor: 'rgba(126,219,122,0.20)',
+
+  pageTitleCard: {
+    backgroundColor: SURFACE,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: BORDER,
+    paddingHorizontal: 16,
+    paddingVertical: 16,
+    marginBottom: 18,
   },
-  aiCheckText: {
-    flex: 1,
-    color: TEXT,
+  pageSubtitle: {
+    color: MUTED,
     fontSize: 14,
     lineHeight: 20,
+    marginTop: 6,
+    fontWeight: '500',
   },
-  aiCheckTextDone: {
-    color: GREEN,
-    fontWeight: '800',
+  manageMetaBtn: {
+    alignSelf: 'flex-start',
+    marginTop: 12,
   },
+  manageMetaBtnText: {
+    color: ACCENT,
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  inputStaticText: {
+    color: TEXT,
+    fontSize: 16,
+    fontWeight: '600',
+    marginBottom: 4,
+  },
+  inputStaticSubtext: {
+    color: MUTED,
+    fontSize: 13,
+    marginBottom: 10,
+  },
+  detailTitle: {
+  color: TEXT,
+  fontSize: 30,
+  fontWeight: '800',
+  marginBottom: 20,
+},
 });
