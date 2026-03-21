@@ -333,12 +333,13 @@ export default function WeekCalendar() {
         {mode === 'month' ? (
           <View style={styles.monthWrap}>
             <MonthView
-              monthDate={anchorDate}
-              onSelectDay={(date) => {
-                setAnchorDate(date);
-                setMode('day');
-              }}
-            />
+  monthDate={anchorDate}
+  events={events}
+  onSelectDay={(date) => {
+    setAnchorDate(date);
+    setMode('day');
+  }}
+/>
           </View>
         ) : (
           <ScrollView

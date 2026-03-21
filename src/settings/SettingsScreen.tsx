@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Alert,
   Pressable,
@@ -12,6 +12,14 @@ import {
 
 import { useAppTheme } from '@/src/theme/ThemeProvider';
 import { ThemeColors } from '@/src/theme/themes';
+import {
+  clearCalendarStorage,
+  exportCalendarAsICS,
+  exportCalendarAsJSON,
+  getCalendarStorageStats,
+  importCalendarFromICS,
+  importCalendarFromJSON,
+} from '@/src/calendar/calendarImportExport';
 
 const editableColorKeys: (keyof ThemeColors)[] = [
   'background',
@@ -37,6 +45,8 @@ const fontOptions = [
   { id: 'serif', label: 'Playfair' },
   { id: 'mono', label: 'Mono' },
 ] as const;
+
+type SettingsTab = 'themes' | 'calendar';
 
 function ColorInput({
   label,
@@ -77,6 +87,84 @@ function ColorInput({
   );
 }
 
+function SettingsEntry({
+  title,
+  subtitle,
+  value,
+  onPress,
+  destructive = false,
+  colors,
+  fontFamily,
+}: {
+  title: string;
+  subtitle?: string;
+  value?: string;
+  onPress?: () => void;
+  destructive?: boolean;
+  colors: ReturnType<typeof useAppTheme>['colors'];
+  fontFamily: ReturnType<typeof useAppTheme>['fontFamily'];
+}) {
+  return (
+    <Pressable onPress={onPress} style={({ pressed }) => [{ opacity: pressed ? 0.85 : 1 }]}>
+      <View
+        style={{
+          minHeight: 68,
+          borderRadius: 16,
+          paddingHorizontal: 14,
+          paddingVertical: 14,
+          flexDirection: 'row',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+        }}
+      >
+        <View style={{ flex: 1, paddingRight: 12 }}>
+          <Text
+            style={{
+              color: destructive ? '#FF7A7A' : colors.text,
+              fontSize: 15,
+              fontWeight: '900',
+              fontFamily: fontFamily.bold,
+            }}
+          >
+            {title}
+          </Text>
+          {!!subtitle && (
+            <Text
+              style={{
+                marginTop: 4,
+                fontSize: 13,
+                lineHeight: 18,
+                opacity: 0.72,
+                color: colors.text,
+                fontFamily: fontFamily.regular,
+              }}
+            >
+              {subtitle}
+            </Text>
+          )}
+        </View>
+
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+          {!!value && (
+            <Text
+              style={{
+                fontSize: 13,
+                fontWeight: '800',
+                opacity: 0.72,
+                color: colors.text,
+                fontFamily: fontFamily.bold,
+              }}
+            >
+              {value}
+            </Text>
+          )}
+          <Text style={{ fontSize: 22, opacity: 0.35, color: colors.text }}>›</Text>
+        </View>
+      </View>
+    </Pressable>
+  );
+}
+
 export default function SettingsScreen() {
   const {
     colors,
@@ -95,7 +183,137 @@ export default function SettingsScreen() {
     fontFamily,
   } = useAppTheme();
 
+  const [activeTab, setActiveTab] = useState<SettingsTab>('themes');
+  const [storageStats, setStorageStats] = useState<{
+    count: number;
+    bytes: number;
+    approxKB: number;
+    oldestEvent?: string;
+    newestEvent?: string;
+  } | null>(null);
+
   const styles = makeStyles(colors, fontFamily);
+
+  async function refreshStorageStats() {
+    try {
+      const stats = await getCalendarStorageStats();
+      setStorageStats(stats);
+    } catch {
+      setStorageStats(null);
+    }
+  }
+
+  useEffect(() => {
+    void refreshStorageStats();
+  }, []);
+
+  function askImportType() {
+    Alert.alert('Import', 'Welches Format möchtest du importieren?', [
+      { text: 'Abbrechen', style: 'cancel' },
+      { text: 'JSON', onPress: () => askImportMode('json') },
+      { text: 'ICS', onPress: () => askImportMode('ics') },
+    ]);
+  }
+
+  function askImportMode(type: 'json' | 'ics') {
+    Alert.alert(
+      'Importmodus',
+      'Möchtest du die neuen Termine anhängen oder die alten vollständig ersetzen?',
+      [
+        { text: 'Abbrechen', style: 'cancel' },
+        {
+          text: 'Anhängen',
+          onPress: async () => {
+            try {
+              const result =
+                type === 'json'
+                  ? await importCalendarFromJSON('append')
+                  : await importCalendarFromICS('append');
+
+              await refreshStorageStats();
+
+              Alert.alert(
+                'Import abgeschlossen',
+                `${result.imported} Termin${result.imported === 1 ? '' : 'e'} importiert.`
+              );
+            } catch {
+              Alert.alert('Fehler', 'Die Datei konnte nicht importiert werden.');
+            }
+          },
+        },
+        {
+          text: 'Ersetzen',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              const result =
+                type === 'json'
+                  ? await importCalendarFromJSON('replace')
+                  : await importCalendarFromICS('replace');
+
+              await refreshStorageStats();
+
+              Alert.alert(
+                'Import abgeschlossen',
+                `${result.imported} Termin${result.imported === 1 ? '' : 'e'} importiert.`
+              );
+            } catch {
+              Alert.alert('Fehler', 'Die Datei konnte nicht importiert werden.');
+            }
+          },
+        },
+      ]
+    );
+  }
+
+  function askExportType() {
+    Alert.alert('Export', 'Welches Format möchtest du exportieren?', [
+      { text: 'Abbrechen', style: 'cancel' },
+      {
+        text: 'JSON',
+        onPress: async () => {
+          try {
+            await exportCalendarAsJSON();
+          } catch {
+            Alert.alert('Fehler', 'JSON-Export konnte nicht erstellt werden.');
+          }
+        },
+      },
+      {
+        text: 'ICS',
+        onPress: async () => {
+          try {
+            await exportCalendarAsICS();
+          } catch {
+            Alert.alert('Fehler', 'ICS-Export konnte nicht erstellt werden.');
+          }
+        },
+      },
+    ]);
+  }
+
+  function askResetCalendar() {
+    Alert.alert(
+      'Kalender zurücksetzen',
+      'Dadurch werden alle lokal gespeicherten Kalendertermine gelöscht.',
+      [
+        { text: 'Abbrechen', style: 'cancel' },
+        {
+          text: 'Löschen',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await clearCalendarStorage();
+              await refreshStorageStats();
+              Alert.alert('Erledigt', 'Alle lokalen Kalenderdaten wurden gelöscht.');
+            } catch {
+              Alert.alert('Fehler', 'Kalenderdaten konnten nicht gelöscht werden.');
+            }
+          },
+        },
+      ]
+    );
+  }
 
   return (
     <SafeAreaView style={styles.safe}>
@@ -111,135 +329,229 @@ export default function SettingsScreen() {
         </View>
 
         <View style={styles.card}>
-          <Text style={styles.cardTitle}>Theme-Modus</Text>
+          <Text style={styles.cardTitle}>Bereiche</Text>
 
-          <View style={styles.rowWrap}>
+          <View style={styles.topTabWrap}>
             <Pressable
-              onPress={() => setMode('preset')}
-              style={[styles.pill, mode === 'preset' && styles.pillActive]}
+              onPress={() => setActiveTab('themes')}
+              style={[styles.topTab, activeTab === 'themes' && styles.topTabActive]}
             >
-              <Text style={[styles.pillText, mode === 'preset' && styles.pillTextActive]}>
-                Vorgefertigt
+              <Text style={[styles.topTabText, activeTab === 'themes' && styles.topTabTextActive]}>
+                Themes
               </Text>
             </Pressable>
 
             <Pressable
-              onPress={() => setMode('custom')}
-              style={[styles.pill, mode === 'custom' && styles.pillActive]}
+              onPress={() => setActiveTab('calendar')}
+              style={[styles.topTab, activeTab === 'calendar' && styles.topTabActive]}
             >
-              <Text style={[styles.pillText, mode === 'custom' && styles.pillTextActive]}>
-                Eigenes Design
+              <Text
+                style={[styles.topTabText, activeTab === 'calendar' && styles.topTabTextActive]}
+              >
+                Kalender
               </Text>
             </Pressable>
           </View>
         </View>
 
-        <View style={styles.card}>
-          <Text style={styles.cardTitle}>Themes ({presets.length})</Text>
+        {activeTab === 'themes' && (
+          <>
+            <View style={styles.card}>
+              <Text style={styles.cardTitle}>Theme-Modus</Text>
 
-          {presets.map((preset) => {
-            const isActive = mode === 'preset' && selectedThemeId === preset.id;
-
-            return (
-              <Pressable
-                key={preset.id}
-                onPress={() => setSelectedThemeId(preset.id)}
-                style={[styles.themeCard, isActive && styles.themeCardActive]}
-              >
-                <View style={styles.themeTop}>
-                  <Text style={styles.themeName}>{preset.name}</Text>
-                  <Text style={styles.themeState}>{isActive ? 'Aktiv' : 'Auswählen'}</Text>
-                </View>
-
-                <View style={styles.paletteRow}>
-                  {[
-                    preset.colors.background,
-                    preset.colors.card,
-                    preset.colors.primary,
-                    preset.colors.text,
-                  ].map((item, index) => (
-                    <View
-                      key={`${preset.id}-${index}`}
-                      style={[styles.swatch, { backgroundColor: item }]}
-                    />
-                  ))}
-                </View>
-              </Pressable>
-            );
-          })}
-        </View>
-
-        <View style={styles.card}>
-          <Text style={styles.cardTitle}>Schriftart</Text>
-
-          <View style={styles.rowWrap}>
-            {fontOptions.map((item) => {
-              const active = fontPreset === item.id;
-
-              return (
+              <View style={styles.rowWrap}>
                 <Pressable
-                  key={item.id}
-                  onPress={() => setFontPreset(item.id as any)}
-                  style={[styles.pill, active && styles.pillActive]}
+                  onPress={() => setMode('preset')}
+                  style={[styles.pill, mode === 'preset' && styles.pillActive]}
                 >
-                  <Text style={[styles.pillText, active && styles.pillTextActive]}>
-                    {item.label}
+                  <Text style={[styles.pillText, mode === 'preset' && styles.pillTextActive]}>
+                    Vorgefertigt
                   </Text>
                 </Pressable>
-              );
-            })}
-          </View>
-        </View>
 
-        <View style={styles.card}>
-          <Text style={styles.cardTitle}>Eigenes Theme gestalten</Text>
+                <Pressable
+                  onPress={() => setMode('custom')}
+                  style={[styles.pill, mode === 'custom' && styles.pillActive]}
+                >
+                  <Text style={[styles.pillText, mode === 'custom' && styles.pillTextActive]}>
+                    Eigenes Design
+                  </Text>
+                </Pressable>
+              </View>
+            </View>
 
-          <TextInput
-            value={customTheme.name}
-            onChangeText={updateCustomThemeName}
-            placeholder="Name für dein Design"
-            placeholderTextColor={colors.textMuted}
-            style={styles.input}
-          />
+            <View style={styles.card}>
+              <Text style={styles.cardTitle}>Themes ({presets.length})</Text>
 
-          <View style={styles.customActions}>
-            <Pressable onPress={() => setMode('custom')} style={styles.primaryBtn}>
-              <Text style={styles.primaryBtnText}>Custom Theme aktivieren</Text>
-            </Pressable>
+              {presets.map((preset) => {
+                const isActive = mode === 'preset' && selectedThemeId === preset.id;
 
-            <Pressable
-              onPress={() => {
-                Alert.alert(
-                  'Custom Theme zurücksetzen',
-                  'Möchtest du dein eigenes Design wirklich zurücksetzen?',
-                  [
-                    { text: 'Abbrechen', style: 'cancel' },
-                    {
-                      text: 'Zurücksetzen',
-                      style: 'destructive',
-                      onPress: () => resetCustomTheme(),
-                    },
-                  ]
+                return (
+                  <Pressable
+                    key={preset.id}
+                    onPress={() => setSelectedThemeId(preset.id)}
+                    style={[styles.themeCard, isActive && styles.themeCardActive]}
+                  >
+                    <View style={styles.themeTop}>
+                      <Text style={styles.themeName}>{preset.name}</Text>
+                      <Text style={styles.themeState}>{isActive ? 'Aktiv' : 'Auswählen'}</Text>
+                    </View>
+
+                    <View style={styles.paletteRow}>
+                      {[
+                        preset.colors.background,
+                        preset.colors.card,
+                        preset.colors.primary,
+                        preset.colors.text,
+                      ].map((item, index) => (
+                        <View
+                          key={`${preset.id}-${index}`}
+                          style={[styles.swatch, { backgroundColor: item }]}
+                        />
+                      ))}
+                    </View>
+                  </Pressable>
                 );
-              }}
-              style={styles.secondaryBtn}
-            >
-              <Text style={styles.secondaryBtnText}>Zurücksetzen</Text>
-            </Pressable>
-          </View>
+              })}
+            </View>
 
-          {editableColorKeys.map((key) => (
-            <ColorInput
-              key={key}
-              label={key}
-              value={customTheme.colors[key]}
-              onChange={(value) => updateCustomThemeColor(key, value)}
-              textColor={colors.text}
-              borderColor={colors.border}
-              bg={colors.cardSecondary}
-            />
-          ))}
-        </View>
+            <View style={styles.card}>
+              <Text style={styles.cardTitle}>Schriftart</Text>
+
+              <View style={styles.rowWrap}>
+                {fontOptions.map((item) => {
+                  const active = fontPreset === item.id;
+
+                  return (
+                    <Pressable
+                      key={item.id}
+                      onPress={() => setFontPreset(item.id as any)}
+                      style={[styles.pill, active && styles.pillActive]}
+                    >
+                      <Text style={[styles.pillText, active && styles.pillTextActive]}>
+                        {item.label}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+            </View>
+
+            <View style={styles.card}>
+              <Text style={styles.cardTitle}>Eigenes Theme gestalten</Text>
+
+              <TextInput
+                value={customTheme.name}
+                onChangeText={updateCustomThemeName}
+                placeholder="Name für dein Design"
+                placeholderTextColor={colors.textMuted}
+                style={styles.input}
+              />
+
+              <View style={styles.customActions}>
+                <Pressable onPress={() => setMode('custom')} style={styles.primaryBtn}>
+                  <Text style={styles.primaryBtnText}>Custom Theme aktivieren</Text>
+                </Pressable>
+
+                <Pressable
+                  onPress={() => {
+                    Alert.alert(
+                      'Custom Theme zurücksetzen',
+                      'Möchtest du dein eigenes Design wirklich zurücksetzen?',
+                      [
+                        { text: 'Abbrechen', style: 'cancel' },
+                        {
+                          text: 'Zurücksetzen',
+                          style: 'destructive',
+                          onPress: () => resetCustomTheme(),
+                        },
+                      ]
+                    );
+                  }}
+                  style={styles.secondaryBtn}
+                >
+                  <Text style={styles.secondaryBtnText}>Zurücksetzen</Text>
+                </Pressable>
+              </View>
+
+              {editableColorKeys.map((key) => (
+                <ColorInput
+                  key={key}
+                  label={key}
+                  value={customTheme.colors[key]}
+                  onChange={(value) => updateCustomThemeColor(key, value)}
+                  textColor={colors.text}
+                  borderColor={colors.border}
+                  bg={colors.cardSecondary}
+                />
+              ))}
+            </View>
+          </>
+        )}
+
+        {activeTab === 'calendar' && (
+          <>
+            <View style={styles.card}>
+              <Text style={styles.cardTitle}>Kalender</Text>
+
+              <View style={styles.settingsList}>
+                <SettingsEntry
+                  title="Datei importieren"
+                  subtitle="Kalenderdaten aus JSON oder ICS übernehmen"
+                  onPress={askImportType}
+                  colors={colors}
+                  fontFamily={fontFamily}
+                />
+                <View style={styles.separator} />
+
+                <SettingsEntry
+                  title="Datei exportieren"
+                  subtitle="Kalenderdaten als JSON oder ICS sichern"
+                  onPress={askExportType}
+                  colors={colors}
+                  fontFamily={fontFamily}
+                />
+                <View style={styles.separator} />
+
+                <SettingsEntry
+                  title="Gespeicherte Termine"
+                  subtitle="Anzahl der aktuell lokal gespeicherten Einträge"
+                  value={String(storageStats?.count ?? 0)}
+                  colors={colors}
+                  fontFamily={fontFamily}
+                />
+                <View style={styles.separator} />
+
+                <SettingsEntry
+                  title="Speicherbedarf"
+                  subtitle="Geschätzter lokaler Speicherverbrauch"
+                  value={`${storageStats?.approxKB ?? 0} KB`}
+                  colors={colors}
+                  fontFamily={fontFamily}
+                />
+                <View style={styles.separator} />
+
+                <SettingsEntry
+                  title="Kalender zurücksetzen"
+                  subtitle="Alle lokalen Kalenderdaten löschen"
+                  destructive
+                  onPress={askResetCalendar}
+                  colors={colors}
+                  fontFamily={fontFamily}
+                />
+              </View>
+            </View>
+
+            <View style={styles.card}>
+              <Text style={styles.cardTitle}>Später hier ergänzen</Text>
+              <Text style={styles.infoText}>• Standarddauer neuer Termine</Text>
+              <Text style={styles.infoText}>• Wochenstart Montag / Sonntag</Text>
+              <Text style={styles.infoText}>• Wiederholende Termine</Text>
+              <Text style={styles.infoText}>• Standard-Erinnerungen</Text>
+              <Text style={styles.infoText}>• Zeitzone / Reisen</Text>
+            </View>
+          </>
+        )}
 
         <View style={styles.card}>
           <Text style={styles.cardTitle}>Später hier ergänzen</Text>
@@ -306,6 +618,32 @@ function makeStyles(
       fontWeight: '900',
       marginBottom: 12,
       fontFamily: fontFamily.bold,
+    },
+    topTabWrap: {
+      flexDirection: 'row',
+      gap: 10,
+    },
+    topTab: {
+      flex: 1,
+      paddingVertical: 13,
+      borderRadius: 16,
+      borderWidth: 1,
+      borderColor: colors.border,
+      backgroundColor: colors.cardSecondary,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    topTabActive: {
+      backgroundColor: colors.primary,
+      borderColor: colors.primary,
+    },
+    topTabText: {
+      color: colors.text,
+      fontWeight: '900',
+      fontFamily: fontFamily.bold,
+    },
+    topTabTextActive: {
+      color: colors.primaryText,
     },
     rowWrap: {
       flexDirection: 'row',
@@ -414,6 +752,19 @@ function makeStyles(
       color: colors.text,
       fontWeight: '900',
       fontFamily: fontFamily.bold,
+    },
+    settingsList: {
+      backgroundColor: colors.cardSecondary,
+      borderRadius: 18,
+      overflow: 'hidden',
+      borderWidth: 1,
+      borderColor: colors.border,
+    },
+    separator: {
+      height: 1,
+      backgroundColor: colors.border,
+      opacity: 0.7,
+      marginLeft: 14,
     },
     infoText: {
       color: colors.textMuted,
