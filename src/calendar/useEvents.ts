@@ -21,6 +21,8 @@ function normalizeStoredEvent(raw: any): CalEvent | null {
     start,
     end,
     color: raw.color ?? '#D4AF37',
+    colorIndex:
+      typeof raw.colorIndex === 'number' && raw.colorIndex >= 0 ? raw.colorIndex : 0,
     location: raw.location ? String(raw.location) : undefined,
     description: raw.description ? String(raw.description) : undefined,
   };
@@ -70,8 +72,16 @@ export function useEvents() {
 
   const addEvent = useCallback(
     async (event: CalEvent) => {
+      const normalized: CalEvent = {
+        ...event,
+        colorIndex:
+          typeof event.colorIndex === 'number' && event.colorIndex >= 0
+            ? event.colorIndex
+            : 0,
+      };
+
       setEvents((prev) => {
-        const next = [...prev, event];
+        const next = [...prev, normalized];
         void saveEvents(next);
         return next;
       });
@@ -81,8 +91,16 @@ export function useEvents() {
 
   const updateEvent = useCallback(
     async (updated: CalEvent) => {
+      const normalized: CalEvent = {
+        ...updated,
+        colorIndex:
+          typeof updated.colorIndex === 'number' && updated.colorIndex >= 0
+            ? updated.colorIndex
+            : 0,
+      };
+
       setEvents((prev) => {
-        const next = prev.map((event) => (event.id === updated.id ? updated : event));
+        const next = prev.map((event) => (event.id === normalized.id ? normalized : event));
         void saveEvents(next);
         return next;
       });

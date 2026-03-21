@@ -31,6 +31,13 @@ const editableColorKeys: (keyof ThemeColors)[] = [
   'tabIconSelected',
 ];
 
+const fontOptions = [
+  { id: 'system', label: 'System' },
+  { id: 'inter', label: 'Inter' },
+  { id: 'serif', label: 'Playfair' },
+  { id: 'mono', label: 'Mono' },
+] as const;
+
 function ColorInput({
   label,
   value,
@@ -128,7 +135,7 @@ export default function SettingsScreen() {
         </View>
 
         <View style={styles.card}>
-          <Text style={styles.cardTitle}>5 fertige Themes</Text>
+          <Text style={styles.cardTitle}>Themes ({presets.length})</Text>
 
           {presets.map((preset) => {
             const isActive = mode === 'preset' && selectedThemeId === preset.id;
@@ -151,7 +158,10 @@ export default function SettingsScreen() {
                     preset.colors.primary,
                     preset.colors.text,
                   ].map((item, index) => (
-                    <View key={`${preset.id}-${index}`} style={[styles.swatch, { backgroundColor: item }]} />
+                    <View
+                      key={`${preset.id}-${index}`}
+                      style={[styles.swatch, { backgroundColor: item }]}
+                    />
                   ))}
                 </View>
               </Pressable>
@@ -163,12 +173,7 @@ export default function SettingsScreen() {
           <Text style={styles.cardTitle}>Schriftart</Text>
 
           <View style={styles.rowWrap}>
-            {[
-  { id: 'system', label: 'System' },
-  { id: 'inter', label: 'Inter' },
-  { id: 'serif', label: 'Playfair' },
-  { id: 'mono', label: 'Mono' },
-].map((item) => {
+            {fontOptions.map((item) => {
               const active = fontPreset === item.id;
 
               return (
@@ -249,7 +254,10 @@ export default function SettingsScreen() {
   );
 }
 
-function makeStyles(colors: ReturnType<typeof useAppTheme>['colors'], fontFamily: ReturnType<typeof useAppTheme>['fontFamily']) {
+function makeStyles(
+  colors: ReturnType<typeof useAppTheme>['colors'],
+  fontFamily: ReturnType<typeof useAppTheme>['fontFamily']
+) {
   return StyleSheet.create({
     safe: {
       flex: 1,

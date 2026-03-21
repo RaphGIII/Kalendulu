@@ -14,6 +14,7 @@ const DEFAULTS: Habit[] = [
     id: uid(),
     title: 'Kurz bewegen',
     color: '#D4AF37',
+    colorIndex: 0,
     targetPerDay: 1,
     checkins: {},
     description: 'Kleine Bewegungseinheit, damit der Einstieg leicht bleibt.',
@@ -29,6 +30,7 @@ const DEFAULTS: Habit[] = [
     id: uid(),
     title: 'Fokusblock',
     color: '#7C5CFF',
+    colorIndex: 1,
     targetPerDay: 1,
     checkins: {},
     description: 'Ein klarer Arbeitsblock für echten Fortschritt.',
@@ -50,6 +52,10 @@ const DEFAULT_STATE: HabitState = {
 function normalizeHabit(habit: Habit): Habit {
   return {
     ...habit,
+    colorIndex:
+      typeof habit.colorIndex === 'number' && habit.colorIndex >= 0
+        ? habit.colorIndex
+        : 0,
     description: habit.description ?? '',
     subcategory: habit.subcategory ?? null,
     linkedGoalId: habit.linkedGoalId ?? null,
@@ -192,7 +198,8 @@ function calcStreaks(habit: Habit) {
 
 type AddHabitInput = {
   title: string;
-  color: string;
+  color?: string;
+  colorIndex?: number;
   targetPerDay?: number;
   description?: string;
   subcategory?: string | null;
@@ -261,6 +268,7 @@ export function useHabits() {
   const addHabit = ({
     title,
     color,
+    colorIndex = 0,
     targetPerDay = 1,
     description = '',
     subcategory = null,
@@ -277,7 +285,8 @@ export function useHabits() {
     const habit: Habit = {
       id: uid(),
       title: nextTitle,
-      color,
+      color: color ?? '',
+      colorIndex,
       targetPerDay,
       checkins: {},
       description: description.trim(),
@@ -315,11 +324,11 @@ export function useHabits() {
     }));
   };
 
-  const recolorHabit = (habitId: string, color: string) => {
+  const recolorHabit = (habitId: string, color: string, colorIndex = 0) => {
     setState((current) => ({
       ...current,
       habits: current.habits.map((habit) =>
-        habit.id === habitId ? { ...habit, color } : habit,
+        habit.id === habitId ? { ...habit, color, colorIndex } : habit,
       ),
     }));
   };
@@ -338,6 +347,8 @@ export function useHabits() {
         | 'weekdays'
         | 'dayOfMonth'
         | 'durationMinutes'
+        | 'color'
+        | 'colorIndex'
       >
     >,
   ) => {

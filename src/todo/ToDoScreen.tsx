@@ -22,7 +22,17 @@ function priorityLabel(priority?: 'low' | 'medium' | 'high') {
   return 'Mittel';
 }
 
+function getThemedCategoryColor(
+  category: { id: string; name?: string } | undefined,
+  accentPalette: string[],
+  fallback: string,
+) {
+  if (!category) return fallback;
+  if (!accentPalette.length) return fallback;
 
+  const seed = Math.abs((category.name?.length ?? 0) + category.id.length);
+  return accentPalette[seed % accentPalette.length] ?? fallback;
+}
 
 export default function ToDoScreen() {
   const {
@@ -54,7 +64,9 @@ export default function ToDoScreen() {
   const [catId, setCatId] = useState(state.categories[0]?.id ?? 'business');
 
   const [newCategoryName, setNewCategoryName] = useState('');
-  const [newCategoryColor, setNewCategoryColor] = useState(colors.primary);
+  const [newCategoryColor, setNewCategoryColor] = useState(
+    accentPalette[0] ?? colors.primary
+  );
 
   const glow = useRef(new Animated.Value(0.65)).current;
 
@@ -81,15 +93,8 @@ export default function ToDoScreen() {
   }, [glow]);
 
   useEffect(() => {
-    setNewCategoryColor(colors.primary);
-  }, [colors.primary]);
-
-  const accentColor = useMemo(() => {
-    if (activeCategoryId) {
-      return state.categories.find((category) => category.id === activeCategoryId)?.color ?? colors.primary;
-    }
-    return state.categories[0]?.color ?? colors.primary;
-  }, [activeCategoryId, state.categories, colors.primary]);
+    setNewCategoryColor(accentPalette[0] ?? colors.primary);
+  }, [accentPalette, colors.primary]);
 
   const visibleTasks = showCompleted ? [...openTasks, ...completedTasks] : openTasks;
 
@@ -118,7 +123,7 @@ export default function ToDoScreen() {
 
     addCategory(trimmed, newCategoryColor);
     setNewCategoryName('');
-    setNewCategoryColor(colors.primary);
+    setNewCategoryColor(accentPalette[0] ?? colors.primary);
     setCategoryOpen(false);
   }
 
@@ -177,6 +182,11 @@ export default function ToDoScreen() {
 
             {categoriesWithCounts.map((category) => {
               const active = activeCategoryId === category.id;
+              const themedCategoryColor = getThemedCategoryColor(
+                category,
+                accentPalette,
+                colors.primary
+              );
 
               return (
                 <Pressable
@@ -185,12 +195,19 @@ export default function ToDoScreen() {
                   style={[
                     styles.categoryPill,
                     active && {
-                      borderColor: category.color,
+                      borderColor: themedCategoryColor,
                       borderWidth: 2,
                     },
                   ]}
                 >
-                  <View style={[styles.categoryDot, { backgroundColor: category.color }]} />
+                  <View
+                    style={[
+                      styles.categoryDot,
+                      {
+                        backgroundColor: themedCategoryColor,
+                      },
+                    ]}
+                  />
                   <Text style={styles.categoryPillText}>
                     {category.name} · {category.count}
                   </Text>
@@ -212,7 +229,7 @@ export default function ToDoScreen() {
           ) : (
             visibleTasks.map((task) => {
               const category = state.categories.find((item) => item.id === task.categoryId);
-              const accent = category?.color ?? accentColor;
+              const accent = getThemedCategoryColor(category, accentPalette, colors.primary);
 
               return (
                 <View
@@ -244,7 +261,9 @@ export default function ToDoScreen() {
 
                       <View style={styles.metaRow}>
                         <Text style={styles.metaText}>{category?.name ?? 'Kategorie'}</Text>
-                        {task.subcategory ? <Text style={styles.metaText}>• {task.subcategory}</Text> : null}
+                        {task.subcategory ? (
+                          <Text style={styles.metaText}>• {task.subcategory}</Text>
+                        ) : null}
                         <Text style={styles.metaText}>• {priorityLabel(task.priority)}</Text>
                       </View>
 
@@ -322,7 +341,7 @@ export default function ToDoScreen() {
         style={[
           styles.fabGlow,
           {
-            backgroundColor: accentColor,
+            backgroundColor: colors.primary,
             opacity: glow.interpolate({
               inputRange: [0.65, 1],
               outputRange: [0.14, 0.32],
@@ -405,6 +424,11 @@ export default function ToDoScreen() {
               <View style={styles.pillRow}>
                 {state.categories.map((category) => {
                   const active = catId === category.id;
+                  const themedCategoryColor = getThemedCategoryColor(
+                    category,
+                    accentPalette,
+                    colors.primary
+                  );
 
                   return (
                     <Pressable
@@ -412,14 +436,14 @@ export default function ToDoScreen() {
                       onPress={() => setCatId(category.id)}
                       style={[
                         styles.modalPill,
-                        { borderColor: category.color },
+                        { borderColor: themedCategoryColor },
                         active && { backgroundColor: colors.primary + '22' },
                       ]}
                     >
                       <Text
                         style={[
                           styles.modalPillText,
-                          active && { color: category.color },
+                          active && { color: themedCategoryColor },
                         ]}
                       >
                         {category.name}

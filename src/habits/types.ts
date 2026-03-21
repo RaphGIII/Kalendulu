@@ -4,6 +4,7 @@ export type Habit = {
   id: string;
   title: string;
   color: string;
+  colorIndex?: number;
 
   targetPerDay: number;
   checkins: Record<string, number>;

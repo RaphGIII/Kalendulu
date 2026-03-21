@@ -158,6 +158,18 @@ function buildDefaultDateFromSlot(day: dayjs.Dayjs, hour: number) {
   return day.hour(hour).minute(0).second(0).millisecond(0).toDate();
 }
 
+function getThemedEventColor(
+  colorIndex: number | undefined,
+  eventPalette: string[],
+  fallback: string,
+) {
+  if (!eventPalette.length) return fallback;
+  if (typeof colorIndex !== 'number' || colorIndex < 0) {
+    return eventPalette[0] ?? fallback;
+  }
+  return eventPalette[colorIndex % eventPalette.length] ?? fallback;
+}
+
 function ModeButton({
   label,
   active,
@@ -200,13 +212,13 @@ function formatRangeSingleLine(mode: CalendarMode, anchorDate: Date, shownDays: 
 }
 
 export default function WeekCalendar() {
-  const { colors, fontFamily } = useAppTheme();
+  const { colors, fontFamily, eventPalette } = useAppTheme();
   const styles = useMemo(() => createStyles(colors, fontFamily), [colors, fontFamily]);
 
   const now = useNow();
   const { events, addEvent, updateEvent, deleteEvent } = useEvents();
 
-  const [mode, setMode] = useState<CalendarMode>('three');
+  const [mode, setMode] = useState<CalendarMode>('five');
   const [anchorDate, setAnchorDate] = useState<Date>(new Date());
 
   const [modalVisible, setModalVisible] = useState(false);
@@ -400,6 +412,11 @@ export default function WeekCalendar() {
                         const fontSize = getEventFontSize(height);
                         const subFontSize = getSubFontSize(height);
                         const compact = height < 30;
+                        const themedEventColor = getThemedEventColor(
+  event.colorIndex,
+  eventPalette,
+  colors.primary
+);
 
                         return (
                           <Pressable
@@ -412,7 +429,7 @@ export default function WeekCalendar() {
                                 left: `${left * 100}%`,
                                 width: `${width * 100}%`,
                                 height,
-                                borderLeftColor: event.color || colors.primary,
+                                borderLeftColor: themedEventColor,
                               },
                             ]}
                           >
@@ -439,7 +456,7 @@ export default function WeekCalendar() {
                             ) : null}
 
                             {height >= 54 ? (
-                              <Text style={styles.eventTime}>
+                              <Text style={[styles.eventTime, { color: themedEventColor }]}>
                                 {dayjs(event.start).format('HH:mm')}–{dayjs(event.end).format('HH:mm')}
                               </Text>
                             ) : null}
@@ -732,7 +749,6 @@ function createStyles(
     },
     eventTime: {
       marginTop: 3,
-      color: colors.primary,
       fontSize: 9,
       fontWeight: '800',
       fontFamily: fontFamily.bold,

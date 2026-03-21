@@ -21,8 +21,20 @@ function normalizeMonthGridStart(month: dayjs.Dayjs) {
   return first.subtract(mondayOffset, 'day');
 }
 
+function getThemedEventColor(
+  colorIndex: number | undefined,
+  eventPalette: string[],
+  fallback: string,
+) {
+  if (!eventPalette.length) return fallback;
+  if (typeof colorIndex !== 'number' || colorIndex < 0) {
+    return eventPalette[0] ?? fallback;
+  }
+  return eventPalette[colorIndex % eventPalette.length] ?? fallback;
+}
+
 export default function MonthView({ monthDate, onSelectDay, events = [] }: Props) {
-  const { colors, fontFamily } = useAppTheme();
+  const { colors, fontFamily, eventPalette } = useAppTheme();
   const styles = useMemo(() => createStyles(colors, fontFamily), [colors, fontFamily]);
 
   const month = dayjs(monthDate).startOf('month');
@@ -82,15 +94,23 @@ export default function MonthView({ monthDate, onSelectDay, events = [] }: Props
 
                 {hasEvents ? (
                   <View style={styles.eventDotsWrap}>
-                    {dayEvents.slice(0, 3).map((event, index) => (
-                      <View
-                        key={`${event.id}_${index}`}
-                        style={[
-                          styles.eventDot,
-                          { backgroundColor: event.color || colors.primary },
-                        ]}
-                      />
-                    ))}
+                    {dayEvents.slice(0, 3).map((event, index) => {
+                      const themedEventColor = getThemedEventColor(
+  event.colorIndex,
+  eventPalette,
+  colors.primary
+);
+
+                      return (
+                        <View
+                          key={`${event.id}_${index}`}
+                          style={[
+                            styles.eventDot,
+                            { backgroundColor: themedEventColor },
+                          ]}
+                        />
+                      );
+                    })}
                   </View>
                 ) : (
                   <View style={styles.eventDotsSpacer} />

@@ -99,7 +99,7 @@ export default function EventModal({
     setStartTime(nextStart);
     setEndTime(nextEnd);
     setPickerKind(null);
-  }, [visible, initialEvent, defaultDate, colors.primary]);
+  }, [visible, initialEvent, defaultDate, eventPalette, colors.primary]);
 
   function submit() {
     const trimmedTitle = title.trim();
@@ -112,15 +112,21 @@ export default function EventModal({
       end = dayjs(start).add(30, 'minute').toDate();
     }
 
-    const event: CalEvent = {
-      id: initialEvent?.id ?? uid(),
-      title: trimmedTitle,
-      start,
-      end,
-      color,
-      location: location.trim() || undefined,
-      description: description.trim() || undefined,
-    };
+    const selectedColorIndex = Math.max(
+  0,
+  eventPalette.findIndex((item) => item === color)
+);
+
+const event: CalEvent = {
+  id: initialEvent?.id ?? uid(),
+  title: trimmedTitle,
+  start,
+  end,
+  color,
+  colorIndex: selectedColorIndex,
+  location: location.trim() || undefined,
+  description: description.trim() || undefined,
+};
 
     if (isEditing) {
       onUpdate(event);

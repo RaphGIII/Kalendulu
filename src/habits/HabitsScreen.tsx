@@ -21,7 +21,6 @@ import { useAppTheme } from '@/src/theme/ThemeProvider';
 
 dayjs.locale('de');
 
-
 function cadenceLabel(cadence?: HabitCadence) {
   switch (cadence) {
     case 'selected_days':
@@ -54,6 +53,16 @@ function weekdayLabel(day: number) {
     default:
       return String(day);
   }
+}
+
+function getHabitPaletteColor(
+  colorIndex: number | undefined,
+  habitPalette: string[],
+  fallback: string,
+) {
+  if (!habitPalette.length) return fallback;
+  if (typeof colorIndex !== 'number' || colorIndex < 0) return habitPalette[0] ?? fallback;
+  return habitPalette[colorIndex % habitPalette.length] ?? fallback;
 }
 
 export default function HabitsScreen() {
@@ -111,13 +120,8 @@ export default function HabitsScreen() {
   }, [glow]);
 
   useEffect(() => {
-  setColor(habitPalette[0] ?? colors.primary);
-}, [habitPalette, colors.primary]);
-
-  const accent = useMemo(
-    () => state.habits[0]?.color ?? colors.primary,
-    [state.habits, colors.primary]
-  );
+    setColor(habitPalette[0] ?? colors.primary);
+  }, [habitPalette, colors.primary]);
 
   const totalToday = useMemo(() => {
     return state.habits.reduce((acc, habit) => acc + (habit.checkins[todayKey] ?? 0), 0);
@@ -196,9 +200,15 @@ export default function HabitsScreen() {
     const trimmedTitle = title.trim();
     if (!trimmedTitle) return;
 
+    const selectedColorIndex = Math.max(
+      0,
+      habitPalette.findIndex((item) => item === color)
+    );
+
     addHabit({
       title: trimmedTitle,
       color,
+      colorIndex: selectedColorIndex,
       description,
       subcategory: subcategory.trim() || null,
       cadence,
@@ -287,10 +297,21 @@ export default function HabitsScreen() {
                   : habit.targetPerDay ?? 1;
               const isCelebrating = celebratingHabitId === habit.id;
 
+              const themedHabitColor = getHabitPaletteColor(
+                habit.colorIndex,
+                habitPalette,
+                colors.primary
+              );
+
               return (
                 <View key={habit.id} style={styles.habitRow}>
                   <Pressable onPress={() => handleHabitCheckin(habit.id)} style={styles.habitMain}>
-                    <View style={[styles.habitAccent, { backgroundColor: habit.color || habitPalette[0] || accent || colors.primary }]} />
+                    <View
+                      style={[
+                        styles.habitAccent,
+                        { backgroundColor: themedHabitColor },
+                      ]}
+                    />
 
                     <View style={styles.habitTextWrap}>
                       <Text style={styles.habitTitle}>{habit.title}</Text>
