@@ -48,9 +48,9 @@ export const presetThemes: ThemeDefinition[] = [
       tabIconDefault: 'rgba(255,255,255,0.65)',
       tabIconSelected: '#D4AF37',
     },
-    accentPalette: ['#D4AF37', '#C8A938', '#B89A3F', '#A98E46', '#D8B85A'],
-    eventPalette: ['#D4AF37', '#C8A938', '#BFA245', '#B0924B', '#A88750', '#DABD67'],
-    habitPalette: ['#D4AF37', '#D0B247', '#C7AA4F', '#BEA057', '#B5965E', '#DEBF72'],
+    accentPalette: ['#D4AF37', '#f0d77d', '#aa8c31', '#8a7743', '#d6be77'],
+    eventPalette: ['#D4AF37', '#f0d77d', '#aa8c31', '#8a7743', '#A88750', '#d6be77'],
+    habitPalette: ['#D4AF37', '#f0d77d', '#aa8c31', '#8a7743', '#A88750', '#d6be77'],
   },
 
   {
@@ -73,9 +73,9 @@ export const presetThemes: ThemeDefinition[] = [
       tabIconDefault: 'rgba(20,33,61,0.52)',
       tabIconSelected: '#3A86FF',
     },
-    accentPalette: ['#3A86FF', '#4A90FF', '#5C9BFF', '#6AA5FF', '#7AB0FF'],
-    eventPalette: ['#3A86FF', '#4A90FF', '#5698FF', '#63A0FF', '#70A8FF', '#7EB1FF'],
-    habitPalette: ['#3A86FF', '#4F91FF', '#629CFF', '#73A7FF', '#83B1FF', '#95BCFF'],
+    accentPalette: ['#3A86FF', '#9ac1ff', '#6482b3', '#335d9c', '#849fc7'],
+    eventPalette: ['#3A86FF', '#9ac1ff', '#6482b3', '#335d9c', '#70A8FF', '#849fc7'],
+    habitPalette: ['#3A86FF', '#9ac1ff', '#6482b3', '#335d9c', '#83B1FF', '#849fc7'],
   },
 
   {
@@ -98,9 +98,9 @@ export const presetThemes: ThemeDefinition[] = [
       tabIconDefault: 'rgba(31,41,55,0.48)',
       tabIconSelected: '#5B8DEF',
     },
-    accentPalette: ['#5B8DEF', '#6796F0', '#73A0F1', '#80A9F2', '#8DB3F4'],
-    eventPalette: ['#5B8DEF', '#6696F0', '#70A0F1', '#7BA8F2', '#86B1F3', '#91BBF5'],
-    habitPalette: ['#5B8DEF', '#6A97EE', '#77A0EE', '#85A9EF', '#93B3F0', '#A0BCF2'],
+    accentPalette: ['#b9d0ff', '#6796F0', '#566d99', '#96afda', '#b6c1d3'],
+    eventPalette: ['#b9d0ff', '#6796F0', '#566d99', '#96afda', '#86B1F3', '#b6c1d3'],
+    habitPalette: ['#b9d0ff', '#6796F0', '#566d99', '#96afda', '#93B3F0', '#b6c1d3'],
   },
 
   {
@@ -123,9 +123,9 @@ export const presetThemes: ThemeDefinition[] = [
       tabIconDefault: 'rgba(58,47,42,0.48)',
       tabIconSelected: '#C98A3D',
     },
-    accentPalette: ['#C98A3D', '#C4904C', '#BE955A', '#B99B68', '#D2A56A'],
-    eventPalette: ['#C98A3D', '#C28F49', '#BB9556', '#B59A62', '#AE9F6E', '#D6AD76'],
-    habitPalette: ['#C98A3D', '#C6924E', '#BF975B', '#B89D67', '#B2A374', '#DBB57F'],
+    accentPalette: ['#c07110', '#C4904C', '#a08157', '#927542', '#d2a56ac7'],
+    eventPalette: ['#c07110', '#C28F49', '#a08157', '#927542', '#AE9F6E', '#d2a56ac7'],
+    habitPalette: ['#c07110', '#C6924E', '#a08157', '#927542', '#B2A374', '#d2a56ac7'],
   },
 
   {
@@ -148,9 +148,9 @@ export const presetThemes: ThemeDefinition[] = [
       tabIconDefault: 'rgba(248,245,239,0.50)',
       tabIconSelected: '#D4AF37',
     },
-    accentPalette: ['#D4AF37', '#CDA93B', '#C5A23F', '#BE9C43', '#D9B85A'],
-    eventPalette: ['#D4AF37', '#CDA93B', '#C6A340', '#BE9C45', '#B7964A', '#DDBE68'],
-    habitPalette: ['#D4AF37', '#D0B247', '#C8AB4D', '#C0A453', '#B89D59', '#DFC372'],
+    accentPalette: ['#caae53', '#CDA93B', '#c5a13fc7', '#a07f2d', '#c5ac65'],
+    eventPalette: ['#caae53', '#CDA93B', '#c5a13fc7', '#a07f2d', '#B7964A', '#c5ac65'],
+    habitPalette: ['#caae53', '#D0B247', '#c5a13fc7', '#a07f2d', '#B89D59', '#c5ac65'],
   },
 
   {
@@ -173,9 +173,9 @@ export const presetThemes: ThemeDefinition[] = [
       tabIconDefault: 'rgba(36,64,52,0.48)',
       tabIconSelected: '#6FAF8F',
     },
-    accentPalette: ['#6FAF8F', '#78B496', '#82BA9E', '#8BBFA5', '#95C5AD'],
-    eventPalette: ['#6FAF8F', '#79B596', '#83BB9D', '#8DC1A4', '#97C7AC', '#A1CDB3'],
-    habitPalette: ['#6FAF8F', '#7AB696', '#84BC9D', '#8FC2A4', '#99C8AB', '#A4CFB3'],
+    accentPalette: ['#5b8671', '#78B496', '#91d6b3', '#428563', '#a1cab5'],
+    eventPalette: ['#5b8671', '#78B496', '#91d6b3', '#428563', '#97C7AC', '#a1cab5'],
+    habitPalette: ['#5b8671', '#78B496', '#91d6b3', '#428563', '#99C8AB', '#a1cab5'],
   },
 
   {
@@ -198,9 +198,9 @@ export const presetThemes: ThemeDefinition[] = [
       tabIconDefault: 'rgba(28,39,51,0.48)',
       tabIconSelected: '#1F4E79',
     },
-    accentPalette: ['#1F4E79', '#2A5A84', '#35668E', '#407299', '#4C7EA4'],
-    eventPalette: ['#1F4E79', '#285783', '#32608C', '#3C6996', '#4673A0', '#517CAA'],
-    habitPalette: ['#1F4E79', '#2B5A84', '#36648D', '#416E97', '#4C78A0', '#5882AA'],
+    accentPalette: ['#1F4E79', '#133350', '#3c5a72', '#213b4e', '#5f9cca'],
+    eventPalette: ['#1F4E79', '#133350', '#3c5a72', '#213b4e', '#4673A0', '#5f9cca'],
+    habitPalette: ['#1F4E79', '#133350', '#3c5a72', '#213b4e', '#4C78A0', '#5f9cca'],
   },
 
   {
@@ -223,9 +223,9 @@ export const presetThemes: ThemeDefinition[] = [
       tabIconDefault: 'rgba(245,247,250,0.60)',
       tabIconSelected: '#58A6FF',
     },
-    accentPalette: ['#58A6FF', '#63ACFF', '#6EB2FF', '#79B8FF', '#84BEFF'],
-    eventPalette: ['#58A6FF', '#62ACFF', '#6BB2FF', '#75B8FF', '#7FBEFF', '#89C4FF'],
-    habitPalette: ['#58A6FF', '#65ADFF', '#71B4FF', '#7DBAFF', '#89C1FF', '#95C8FF'],
+    accentPalette: ['#3f6b9c', '#7db5f5', '#6683a3', '#a3cdfd', '#417ec4'],
+    eventPalette: ['#3f6b9c', '#7db5f5', '#6683a3', '#a3cdfd', '#7FBEFF', '#417ec4'],
+    habitPalette: ['#3f6b9c', '#7db5f5', '#6683a3', '#a3cdfd', '#89C1FF', '#417ec4'],
   },
 
   {
@@ -248,9 +248,9 @@ export const presetThemes: ThemeDefinition[] = [
       tabIconDefault: 'rgba(243,255,248,0.60)',
       tabIconSelected: '#7DDE92',
     },
-    accentPalette: ['#7DDE92', '#86E09A', '#8FE3A2', '#98E5AA', '#A1E7B2'],
-    eventPalette: ['#7DDE92', '#87E09A', '#91E3A2', '#9BE5AA', '#A5E8B2', '#AFEABA'],
-    habitPalette: ['#7DDE92', '#88E09A', '#92E2A1', '#9CE4A9', '#A6E7B1', '#B0E9B9'],
+    accentPalette: ['#9de4ac', '#5fac6f', '#64e282', '#98e5aae3', '#A1E7B2'],
+    eventPalette: ['#9de4ac', '#5fac6f', '#64e282', '#98e5aae3', '#A5E8B2', '#AFEABA'],
+    habitPalette: ['#9de4ac', '#5fac6f', '#64e282', '#98e5aae3', '#A6E7B1', '#B0E9B9'],
   },
 
   {
@@ -273,9 +273,9 @@ export const presetThemes: ThemeDefinition[] = [
       tabIconDefault: 'rgba(255,247,245,0.60)',
       tabIconSelected: '#FF9F68',
     },
-    accentPalette: ['#FF9F68', '#FFA775', '#FFB082', '#FFB98F', '#FFC29C'],
-    eventPalette: ['#FF9F68', '#FFA876', '#FFB184', '#FFBA92', '#FFC3A0', '#FFCCAE'],
-    habitPalette: ['#FF9F68', '#FFA977', '#FFB285', '#FFBB93', '#FFC4A1', '#FFCDAF'],
+    accentPalette: ['#b96b3d', '#d6a284', '#ce8e6a', '#ac5d2c', '#caa995'],
+    eventPalette: ['#b96b3d', '#d6a284', '#ce8e6a', '#ac5d2c', '#FFC3A0', '#caa995'],
+    habitPalette: ['#b96b3d', '#d6a284', '#ce8e6a', '#ac5d2c', '#FFC4A1', '#caa995'],
   },
 
   {
@@ -298,9 +298,9 @@ export const presetThemes: ThemeDefinition[] = [
       tabIconDefault: 'rgba(75,34,55,0.48)',
       tabIconSelected: '#E86BA3',
     },
-    accentPalette: ['#E86BA3', '#EA78AB', '#EC86B4', '#EE93BC', '#F0A1C5'],
-    eventPalette: ['#E86BA3', '#EA77AB', '#EC83B3', '#EE8FBB', '#F09BC3', '#F2A7CB'],
-    habitPalette: ['#E86BA3', '#EA79AC', '#EC85B4', '#EE90BC', '#F09BC4', '#F2A7CC'],
+    accentPalette: ['#b65580', '#ee94bc', '#c788a4', '#fdbbd9', '#e2afc6e3'],
+    eventPalette: ['#b65580', '#ee94bc', '#c788a4', '#fdbbd9', '#F09BC3', '#e2afc6e3'],
+    habitPalette: ['#b65580', '#ee94bc', '#c788a4', '#fdbbd9', '#F09BC4', '#e2afc6e3'],
   },
 
   {
@@ -323,9 +323,9 @@ export const presetThemes: ThemeDefinition[] = [
       tabIconDefault: 'rgba(90,49,69,0.48)',
       tabIconSelected: '#D97AAE',
     },
-    accentPalette: ['#D97AAE', '#DD86B5', '#E192BD', '#E59EC5', '#E9AACD'],
-    eventPalette: ['#D97AAE', '#DC85B5', '#DF90BC', '#E39BC3', '#E6A6CA', '#EAB1D1'],
-    habitPalette: ['#D97AAE', '#DC86B6', '#E091BD', '#E39CC4', '#E7A7CB', '#EAB2D2'],
+    accentPalette: ['#D97AAE', '#d45398', '#dbb4ca', '#b488a0', '#e7cfdd'],
+    eventPalette: ['#D97AAE', '#d45398', '#dbb4ca', '#b488a0', '#E6A6CA', '#e7cfdd'],
+    habitPalette: ['#D97AAE', '#d45398', '#dbb4ca', '#b488a0', '#E7A7CB', '#e7cfdd'],
   },
 
   {
@@ -348,9 +348,9 @@ export const presetThemes: ThemeDefinition[] = [
       tabIconDefault: 'rgba(63,42,90,0.48)',
       tabIconSelected: '#A97CF0',
     },
-    accentPalette: ['#A97CF0', '#B289F1', '#BA96F3', '#C3A3F5', '#CCB0F7'],
-    eventPalette: ['#A97CF0', '#B187F1', '#B993F3', '#C19EF4', '#C9AAF6', '#D1B5F7'],
-    habitPalette: ['#A97CF0', '#B289F1', '#BA95F3', '#C2A0F4', '#CAACF6', '#D3B8F7'],
+    accentPalette: ['#9266da', '#c5a7f1', '#a290c0', '#dac7f8', '#c0a7e6'],
+    eventPalette: ['#9266da', '#c5a7f1', '#a290c0', '#dac7f8', '#C9AAF6', '#c0a7e6'],
+    habitPalette: ['#9266da', '#c5a7f1', '#a290c0', '#dac7f8', '#CAACF6', '#c0a7e6'],
   },
 
   {
@@ -373,9 +373,9 @@ export const presetThemes: ThemeDefinition[] = [
       tabIconDefault: 'rgba(90,56,40,0.48)',
       tabIconSelected: '#F29B6B',
     },
-    accentPalette: ['#F29B6B', '#F4A57A', '#F6AF89', '#F8B998', '#FAC3A7'],
-    eventPalette: ['#F29B6B', '#F4A579', '#F6AE88', '#F8B896', '#FAC1A5', '#FCCBB3'],
-    habitPalette: ['#F29B6B', '#F4A67A', '#F6AF88', '#F8B896', '#FAC2A4', '#FCCBB2'],
+    accentPalette: ['#c9825c', '#e9a783', '#daad95', '#F8B998', '#f7cfbc'],
+    eventPalette: ['#c9825c', '#e9a783', '#daad95', '#F8B998', '#FAC1A5', '#f7cfbc'],
+    habitPalette: ['#c9825c', '#e9a783', '#daad95', '#F8B896', '#FAC2A4', '#f7cfbc'],
   },
 
   {
@@ -398,9 +398,9 @@ export const presetThemes: ThemeDefinition[] = [
       tabIconDefault: 'rgba(255,244,250,0.60)',
       tabIconSelected: '#FF78B2',
     },
-    accentPalette: ['#FF78B2', '#FF84B8', '#FF90BE', '#FF9CC4', '#FFA8CA'],
-    eventPalette: ['#FF78B2', '#FF83B8', '#FF8FBE', '#FF9AC4', '#FFA6CA', '#FFB1D0'],
-    habitPalette: ['#FF78B2', '#FF84B9', '#FF8FBE', '#FF9BC4', '#FFA6CA', '#FFB2D0'],
+    accentPalette: ['#fda0c8', '#c5809d', '#fd6ca9', '#fd90bc', '#eb5a92'],
+    eventPalette: ['#fda0c8', '#c5809d', '#fd6ca9', '#fd90bc', '#FFA6CA', '#eb5a92'],
+    habitPalette: ['#fda0c8', '#c5809d', '#fd6ca9', '#fd90bc', '#FFA6CA', '#eb5a92'],
   },
 
   {
@@ -423,9 +423,9 @@ export const presetThemes: ThemeDefinition[] = [
       tabIconDefault: 'rgba(30,42,54,0.46)',
       tabIconSelected: '#244C74',
     },
-    accentPalette: ['#244C74', '#315882', '#3F6490', '#4C709E', '#5A7CAC'],
-    eventPalette: ['#244C74', '#305781', '#3C628D', '#486D99', '#5478A6', '#6083B2'],
-    habitPalette: ['#244C74', '#315883', '#3E638F', '#4B6E9B', '#587AA7', '#6585B3'],
+    accentPalette: ['#223f5c', '#4b6e94', '#4b617c', '#426da5', '#365683'],
+    eventPalette: ['#223f5c', '#4b6e94', '#4b617c', '#426da5', '#5478A6', '#365683'],
+    habitPalette: ['#223f5c', '#4b6e94', '#4b617c', '#426da5', '#587AA7', '#365683'],
   },
 
   {
