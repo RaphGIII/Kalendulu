@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Platform, StyleSheet, Text, View } from 'react-native';
+import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import Animated, {
   Easing,
   runOnJS,
@@ -59,6 +59,7 @@ export default function WelcomeIntroOverlay({
 }: WelcomeIntroOverlayProps) {
   const greeting = useMemo(() => getGreeting(), []);
   const [startTypingName, setStartTypingName] = useState(false);
+  const [isClosing, setIsClosing] = useState(false);
 
   const overlayOpacity = useSharedValue(0);
   const contentOpacity = useSharedValue(0);
@@ -72,9 +73,36 @@ export default function WelcomeIntroOverlay({
 
   const displayedName = useTypewriter(name, startTypingName, 82);
 
+  const typingStartTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const finishTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const blinkIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const closeOverlay = () => {
+    if (isClosing) return;
+    setIsClosing(true);
+
+    if (typingStartTimerRef.current) clearTimeout(typingStartTimerRef.current);
+    if (finishTimerRef.current) clearTimeout(finishTimerRef.current);
+    if (blinkIntervalRef.current) clearInterval(blinkIntervalRef.current);
+
+    overlayOpacity.value = withTiming(
+      0,
+      {
+        duration: 220,
+        easing: Easing.linear,
+      },
+      (finished) => {
+        if (finished && onFinish) {
+          runOnJS(onFinish)();
+        }
+      }
+    );
+  };
+
   useEffect(() => {
     if (!visible) return;
 
+    setIsClosing(false);
     overlayOpacity.value = 0;
     contentOpacity.value = 0;
     lineMaskWidth.value = 0;
@@ -126,40 +154,28 @@ export default function WelcomeIntroOverlay({
       })
     );
 
-    const typingStartTimer = setTimeout(() => {
+    typingStartTimerRef.current = setTimeout(() => {
       setStartTypingName(true);
     }, 1950);
 
-    const blinkInterval = setInterval(() => {
+    blinkIntervalRef.current = setInterval(() => {
       nameCursorOpacity.value = withTiming(nameCursorOpacity.value === 1 ? 0 : 1, {
         duration: 450,
         easing: Easing.linear,
       });
     }, 460);
 
-    const finishTimer = setTimeout(() => {
-      overlayOpacity.value = withTiming(
-        0,
-        {
-          duration: 550,
-          easing: Easing.linear,
-        },
-        (finished) => {
-          if (finished && onFinish) {
-            runOnJS(onFinish)();
-          }
-        }
-      );
+    finishTimerRef.current = setTimeout(() => {
+      closeOverlay();
     }, 4700);
 
     return () => {
-      clearTimeout(typingStartTimer);
-      clearTimeout(finishTimer);
-      clearInterval(blinkInterval);
+      if (typingStartTimerRef.current) clearTimeout(typingStartTimerRef.current);
+      if (finishTimerRef.current) clearTimeout(finishTimerRef.current);
+      if (blinkIntervalRef.current) clearInterval(blinkIntervalRef.current);
     };
   }, [
     visible,
-    onFinish,
     overlayOpacity,
     contentOpacity,
     lineMaskWidth,
@@ -202,26 +218,30 @@ export default function WelcomeIntroOverlay({
   if (!visible) return null;
 
   return (
-    <Animated.View style={[styles.overlay, overlayStyle]} pointerEvents="none">
-      <Animated.View style={[styles.content, contentStyle]}>
-        <View style={styles.greetingArea}>
-          <View style={styles.greetingMeasureBox}>
-            <Animated.View style={[styles.greetingMask, writingMaskStyle]}>
-              <Text style={styles.greetingText}>{greeting}</Text>
-            </Animated.View>
+    <Pressable style={StyleSheet.absoluteFill} onPress={closeOverlay}>
+      <Animated.View style={[styles.overlay, overlayStyle]}>
+        <Animated.View style={[styles.content, contentStyle]}>
+          <View style={styles.greetingArea}>
+            <View style={styles.greetingMeasureBox}>
+              <Animated.View style={[styles.greetingMask, writingMaskStyle]}>
+                <Text style={styles.greetingText}>{greeting}</Text>
+              </Animated.View>
 
-            <Animated.View style={[styles.pen, penStyle]}>
-              <View style={styles.penTip} />
-            </Animated.View>
+              <Animated.View style={[styles.pen, penStyle]}>
+                <View style={styles.penTip} />
+              </Animated.View>
+            </View>
           </View>
-        </View>
 
-        <Animated.View style={[styles.nameRow, nameWrapStyle]}>
-          <Text style={styles.nameText}>{displayedName}</Text>
-          <Animated.View style={[styles.cursor, cursorStyle]} />
+          <Animated.View style={[styles.nameRow, nameWrapStyle]}>
+            <Text style={styles.nameText}>{displayedName}</Text>
+            <Animated.View style={[styles.cursor, cursorStyle]} />
+          </Animated.View>
+
+          
         </Animated.View>
       </Animated.View>
-    </Animated.View>
+    </Pressable>
   );
 }
 
@@ -313,5 +333,11 @@ const styles = StyleSheet.create({
     marginLeft: 4,
     borderRadius: 2,
     backgroundColor: '#F8FAFC',
+  },
+  skipHint: {
+    marginTop: 28,
+    fontSize: 13,
+    color: 'rgba(255,255,255,0.58)',
+    letterSpacing: 0.4,
   },
 });

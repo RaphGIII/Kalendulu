@@ -1,10 +1,21 @@
 import React from 'react';
-import { Tabs } from 'expo-router';
+import { Redirect, Tabs } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
+
 import { useAppTheme } from '@/src/theme/ThemeProvider';
+import { useAuth } from '@/src/auth/AuthProvider';
 
 export default function TabLayout() {
   const { colors } = useAppTheme();
+  const { authReady, session } = useAuth();
+
+  if (!authReady) {
+    return null;
+  }
+
+  if (!session) {
+    return <Redirect href="/login" />;
+  }
 
   return (
     <Tabs

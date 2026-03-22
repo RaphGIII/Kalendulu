@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   Alert,
   Pressable,
@@ -9,9 +9,12 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
+import { useRouter } from 'expo-router';
 
 import { useAppTheme } from '@/src/theme/ThemeProvider';
 import { ThemeColors } from '@/src/theme/themes';
+import { useAuth } from '@/src/auth/AuthProvider';
 import {
   clearCalendarStorage,
   exportCalendarAsICS,
@@ -46,7 +49,7 @@ const fontOptions = [
   { id: 'mono', label: 'Mono' },
 ] as const;
 
-type SettingsTab = 'themes' | 'calendar';
+type SettingsSection = 'themes' | 'calendar' | 'account' | 'notifications' | 'about';
 
 function ColorInput({
   label,
@@ -105,11 +108,10 @@ function SettingsEntry({
   fontFamily: ReturnType<typeof useAppTheme>['fontFamily'];
 }) {
   return (
-    <Pressable onPress={onPress} style={({ pressed }) => [{ opacity: pressed ? 0.85 : 1 }]}>
+    <Pressable onPress={onPress} style={({ pressed }) => [{ opacity: pressed ? 0.82 : 1 }]}>
       <View
         style={{
-          minHeight: 68,
-          borderRadius: 16,
+          minHeight: 66,
           paddingHorizontal: 14,
           paddingVertical: 14,
           flexDirection: 'row',
@@ -120,7 +122,7 @@ function SettingsEntry({
         <View style={{ flex: 1, paddingRight: 12 }}>
           <Text
             style={{
-              color: destructive ? '#FF7A7A' : colors.text,
+              color: destructive ? colors.danger : colors.text,
               fontSize: 15,
               fontWeight: '900',
               fontFamily: fontFamily.bold,
@@ -134,8 +136,8 @@ function SettingsEntry({
                 marginTop: 4,
                 fontSize: 13,
                 lineHeight: 18,
-                opacity: 0.72,
-                color: colors.text,
+                opacity: 0.78,
+                color: colors.textMuted,
                 fontFamily: fontFamily.regular,
               }}
             >
@@ -150,16 +152,98 @@ function SettingsEntry({
               style={{
                 fontSize: 13,
                 fontWeight: '800',
-                opacity: 0.72,
-                color: colors.text,
+                opacity: 0.82,
+                color: colors.textMuted,
                 fontFamily: fontFamily.bold,
               }}
             >
               {value}
             </Text>
           )}
-          <Text style={{ fontSize: 22, opacity: 0.35, color: colors.text }}>›</Text>
+          {onPress ? <Text style={{ fontSize: 22, opacity: 0.35, color: colors.text }}>›</Text> : null}
         </View>
+      </View>
+    </Pressable>
+  );
+}
+
+function SectionButton({
+  title,
+  subtitle,
+  icon,
+  colors,
+  fontFamily,
+  active,
+  onPress,
+}: {
+  title: string;
+  subtitle: string;
+  icon: keyof typeof Ionicons.glyphMap;
+  colors: ReturnType<typeof useAppTheme>['colors'];
+  fontFamily: ReturnType<typeof useAppTheme>['fontFamily'];
+  active: boolean;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable onPress={onPress} style={({ pressed }) => [{ opacity: pressed ? 0.84 : 1 }]}>
+      <View
+        style={{
+          minHeight: 74,
+          flexDirection: 'row',
+          alignItems: 'center',
+          paddingHorizontal: 14,
+          paddingVertical: 14,
+        }}
+      >
+        <View
+          style={{
+            width: 36,
+            height: 36,
+            borderRadius: 11,
+            alignItems: 'center',
+            justifyContent: 'center',
+            backgroundColor: active ? colors.primary : colors.cardSecondary,
+            marginRight: 12,
+            borderWidth: 1,
+            borderColor: active ? colors.primary : colors.border,
+          }}
+        >
+          <Ionicons
+            name={icon}
+            size={18}
+            color={active ? colors.primaryText : colors.text}
+          />
+        </View>
+
+        <View style={{ flex: 1, paddingRight: 10 }}>
+          <Text
+            style={{
+              color: colors.text,
+              fontSize: 15,
+              fontWeight: '900',
+              fontFamily: fontFamily.bold,
+            }}
+          >
+            {title}
+          </Text>
+          <Text
+            style={{
+              marginTop: 4,
+              color: colors.textMuted,
+              fontSize: 13,
+              lineHeight: 18,
+              fontFamily: fontFamily.regular,
+            }}
+          >
+            {subtitle}
+          </Text>
+        </View>
+
+        <Ionicons
+          name={active ? 'chevron-up' : 'chevron-forward'}
+          size={20}
+          color={colors.textMuted}
+        />
       </View>
     </Pressable>
   );
@@ -183,7 +267,10 @@ export default function SettingsScreen() {
     fontFamily,
   } = useAppTheme();
 
-  const [activeTab, setActiveTab] = useState<SettingsTab>('themes');
+  const { fullName, user, signOut } = useAuth();
+  const router = useRouter();
+
+  const [openSection, setOpenSection] = useState<SettingsSection | null>(null);
   const [storageStats, setStorageStats] = useState<{
     count: number;
     bytes: number;
@@ -193,6 +280,16 @@ export default function SettingsScreen() {
   } | null>(null);
 
   const styles = makeStyles(colors, fontFamily);
+
+  const displayName = useMemo(() => {
+    return (
+      fullName?.trim() ||
+      (user?.user_metadata?.full_name as string | undefined) ||
+      'Benutzer'
+    );
+  }, [fullName, user]);
+
+  const email = user?.email ?? 'Keine E-Mail gefunden';
 
   async function refreshStorageStats() {
     try {
@@ -206,6 +303,10 @@ export default function SettingsScreen() {
   useEffect(() => {
     void refreshStorageStats();
   }, []);
+
+  function toggleSection(section: SettingsSection) {
+    setOpenSection((prev) => (prev === section ? null : section));
+  }
 
   function askImportType() {
     Alert.alert('Import', 'Welches Format möchtest du importieren?', [
@@ -315,49 +416,91 @@ export default function SettingsScreen() {
     );
   }
 
+  async function handleLogout() {
+    try {
+      await signOut();
+      router.replace('/login' as any);
+    } catch (error: any) {
+      Alert.alert('Fehler', error?.message ?? 'Abmelden fehlgeschlagen.');
+    }
+  }
+
   return (
     <SafeAreaView style={styles.safe}>
-      <ScrollView contentContainerStyle={styles.content}>
-        <View style={styles.heroCard}>
-          <Text style={styles.title}>Einstellungen</Text>
-          <Text style={styles.subtitle}>
-            Hier kann der Benutzer später auch Login, Konto, Cloud-Sync und Profil verwalten.
-          </Text>
-          <Text style={styles.previewLabel}>
-            Aktives Design: {theme.name} · Schrift: {fontPreset}
-          </Text>
+      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+        <View style={styles.headerWrap}>
+          <Text style={styles.screenTitle}>Einstellungen</Text>
         </View>
 
-        <View style={styles.card}>
-          <Text style={styles.cardTitle}>Bereiche</Text>
-
-          <View style={styles.topTabWrap}>
-            <Pressable
-              onPress={() => setActiveTab('themes')}
-              style={[styles.topTab, activeTab === 'themes' && styles.topTabActive]}
-            >
-              <Text style={[styles.topTabText, activeTab === 'themes' && styles.topTabTextActive]}>
-                Themes
-              </Text>
-            </Pressable>
-
-            <Pressable
-              onPress={() => setActiveTab('calendar')}
-              style={[styles.topTab, activeTab === 'calendar' && styles.topTabActive]}
-            >
-              <Text
-                style={[styles.topTabText, activeTab === 'calendar' && styles.topTabTextActive]}
-              >
-                Kalender
-              </Text>
-            </Pressable>
+        <View style={styles.accountCard}>
+          <View style={styles.avatar}>
+            <Ionicons name="person" size={26} color={colors.primaryText} />
           </View>
+
+          <View style={{ flex: 1 }}>
+            <Text style={styles.accountName}>{displayName}</Text>
+            <Text style={styles.accountSub}>{email}</Text>
+          </View>
+
+          <Ionicons name="chevron-forward" size={20} color={colors.textMuted} />
         </View>
 
-        {activeTab === 'themes' && (
+        <View style={styles.groupCard}>
+          <SectionButton
+            title="Themes"
+            subtitle={`Aktiv: ${theme.name} · Schrift: ${fontPreset}`}
+            icon="color-palette-outline"
+            colors={colors}
+            fontFamily={fontFamily}
+            active={openSection === 'themes'}
+            onPress={() => toggleSection('themes')}
+          />
+          <View style={styles.separator} />
+          <SectionButton
+            title="Kalender"
+            subtitle="Import, Export und lokale Daten verwalten"
+            icon="calendar-outline"
+            colors={colors}
+            fontFamily={fontFamily}
+            active={openSection === 'calendar'}
+            onPress={() => toggleSection('calendar')}
+          />
+          <View style={styles.separator} />
+          <SectionButton
+            title="Konto"
+            subtitle="Login, Profil und Session"
+            icon="person-circle-outline"
+            colors={colors}
+            fontFamily={fontFamily}
+            active={openSection === 'account'}
+            onPress={() => toggleSection('account')}
+          />
+          <View style={styles.separator} />
+          <SectionButton
+            title="Benachrichtigungen"
+            subtitle="Später erweiterbar für Erinnerungen und Push"
+            icon="notifications-outline"
+            colors={colors}
+            fontFamily={fontFamily}
+            active={openSection === 'notifications'}
+            onPress={() => toggleSection('notifications')}
+          />
+          <View style={styles.separator} />
+          <SectionButton
+            title="Info"
+            subtitle="App, Sync, Backup und spätere Erweiterungen"
+            icon="information-circle-outline"
+            colors={colors}
+            fontFamily={fontFamily}
+            active={openSection === 'about'}
+            onPress={() => toggleSection('about')}
+          />
+        </View>
+
+        {openSection === 'themes' && (
           <>
-            <View style={styles.card}>
-              <Text style={styles.cardTitle}>Theme-Modus</Text>
+            <View style={styles.detailCard}>
+              <Text style={styles.detailTitle}>Theme-Modus</Text>
 
               <View style={styles.rowWrap}>
                 <Pressable
@@ -380,8 +523,8 @@ export default function SettingsScreen() {
               </View>
             </View>
 
-            <View style={styles.card}>
-              <Text style={styles.cardTitle}>Themes ({presets.length})</Text>
+            <View style={styles.detailCard}>
+              <Text style={styles.detailTitle}>Themes ({presets.length})</Text>
 
               {presets.map((preset) => {
                 const isActive = mode === 'preset' && selectedThemeId === preset.id;
@@ -415,8 +558,8 @@ export default function SettingsScreen() {
               })}
             </View>
 
-            <View style={styles.card}>
-              <Text style={styles.cardTitle}>Schriftart</Text>
+            <View style={styles.detailCard}>
+              <Text style={styles.detailTitle}>Schriftart</Text>
 
               <View style={styles.rowWrap}>
                 {fontOptions.map((item) => {
@@ -437,8 +580,8 @@ export default function SettingsScreen() {
               </View>
             </View>
 
-            <View style={styles.card}>
-              <Text style={styles.cardTitle}>Eigenes Theme gestalten</Text>
+            <View style={styles.detailCard}>
+              <Text style={styles.detailTitle}>Eigenes Theme gestalten</Text>
 
               <TextInput
                 value={customTheme.name}
@@ -489,10 +632,10 @@ export default function SettingsScreen() {
           </>
         )}
 
-        {activeTab === 'calendar' && (
+        {openSection === 'calendar' && (
           <>
-            <View style={styles.card}>
-              <Text style={styles.cardTitle}>Kalender</Text>
+            <View style={styles.detailCard}>
+              <Text style={styles.detailTitle}>Kalender</Text>
 
               <View style={styles.settingsList}>
                 <SettingsEntry
@@ -502,7 +645,7 @@ export default function SettingsScreen() {
                   colors={colors}
                   fontFamily={fontFamily}
                 />
-                <View style={styles.separator} />
+                <View style={styles.separatorInner} />
 
                 <SettingsEntry
                   title="Datei exportieren"
@@ -511,7 +654,7 @@ export default function SettingsScreen() {
                   colors={colors}
                   fontFamily={fontFamily}
                 />
-                <View style={styles.separator} />
+                <View style={styles.separatorInner} />
 
                 <SettingsEntry
                   title="Gespeicherte Termine"
@@ -520,7 +663,7 @@ export default function SettingsScreen() {
                   colors={colors}
                   fontFamily={fontFamily}
                 />
-                <View style={styles.separator} />
+                <View style={styles.separatorInner} />
 
                 <SettingsEntry
                   title="Speicherbedarf"
@@ -529,7 +672,7 @@ export default function SettingsScreen() {
                   colors={colors}
                   fontFamily={fontFamily}
                 />
-                <View style={styles.separator} />
+                <View style={styles.separatorInner} />
 
                 <SettingsEntry
                   title="Kalender zurücksetzen"
@@ -542,8 +685,8 @@ export default function SettingsScreen() {
               </View>
             </View>
 
-            <View style={styles.card}>
-              <Text style={styles.cardTitle}>Später hier ergänzen</Text>
+            <View style={styles.detailCard}>
+              <Text style={styles.detailTitle}>Später erweiterbar</Text>
               <Text style={styles.infoText}>• Standarddauer neuer Termine</Text>
               <Text style={styles.infoText}>• Wochenstart Montag / Sonntag</Text>
               <Text style={styles.infoText}>• Wiederholende Termine</Text>
@@ -553,14 +696,61 @@ export default function SettingsScreen() {
           </>
         )}
 
-        <View style={styles.card}>
-          <Text style={styles.cardTitle}>Später hier ergänzen</Text>
-          <Text style={styles.infoText}>• Login / Account</Text>
-          <Text style={styles.infoText}>• Profilbild</Text>
-          <Text style={styles.infoText}>• Sync / Backup</Text>
-          <Text style={styles.infoText}>• Benachrichtigungen</Text>
-          <Text style={styles.infoText}>• Premium / Abo</Text>
-        </View>
+        {openSection === 'account' && (
+          <>
+            <View style={styles.detailCard}>
+              <Text style={styles.detailTitle}>Konto</Text>
+
+              <View style={styles.settingsList}>
+                <SettingsEntry
+                  title="Angemeldeter Benutzer"
+                  subtitle="Wird aus Supabase geladen"
+                  value={displayName}
+                  colors={colors}
+                  fontFamily={fontFamily}
+                />
+                <View style={styles.separatorInner} />
+
+                <SettingsEntry
+                  title="E-Mail"
+                  subtitle="Aktuell verwendetes Login"
+                  value={email}
+                  colors={colors}
+                  fontFamily={fontFamily}
+                />
+              </View>
+            </View>
+
+            <View style={styles.detailCard}>
+              <Pressable onPress={handleLogout} style={styles.logoutButton}>
+                <Ionicons name="log-out-outline" size={18} color="#FFFFFF" />
+                <Text style={styles.logoutText}>Abmelden</Text>
+              </Pressable>
+            </View>
+          </>
+        )}
+
+        {openSection === 'notifications' && (
+          <View style={styles.detailCard}>
+            <Text style={styles.detailTitle}>Benachrichtigungen</Text>
+            <Text style={styles.infoText}>• Push-Benachrichtigungen</Text>
+            <Text style={styles.infoText}>• Termin-Erinnerungen</Text>
+            <Text style={styles.infoText}>• Habit-Erinnerungen</Text>
+            <Text style={styles.infoText}>• Ziel- und Fortschritts-Hinweise</Text>
+          </View>
+        )}
+
+        {openSection === 'about' && (
+          <View style={styles.detailCard}>
+            <Text style={styles.detailTitle}>Info & später erweiterbar</Text>
+            <Text style={styles.infoText}>• Login / Account</Text>
+            <Text style={styles.infoText}>• Profilbild</Text>
+            <Text style={styles.infoText}>• Sync / Backup</Text>
+            <Text style={styles.infoText}>• Premium / Abo</Text>
+            <Text style={styles.infoText}>• Datenschutz / Impressum</Text>
+            <Text style={styles.infoText}>• App-Version und Changelog</Text>
+          </View>
+        )}
       </ScrollView>
     </SafeAreaView>
   );
@@ -576,74 +766,85 @@ function makeStyles(
       backgroundColor: colors.background,
     },
     content: {
-      padding: 18,
+      paddingHorizontal: 16,
+      paddingTop: 12,
       paddingBottom: 120,
-      gap: 16,
+      gap: 14,
     },
-    heroCard: {
-      backgroundColor: colors.backgroundSecondary,
-      borderRadius: 24,
-      padding: 18,
+    headerWrap: {
+      paddingTop: 8,
+      paddingHorizontal: 4,
+    },
+    screenTitle: {
+      color: colors.text,
+      fontSize: 34,
+      fontWeight: '900',
+      fontFamily: fontFamily.bold,
+      letterSpacing: -0.6,
+    },
+    accountCard: {
+      backgroundColor: colors.card,
+      borderRadius: 26,
       borderWidth: 1,
       borderColor: colors.border,
+      paddingHorizontal: 16,
+      paddingVertical: 16,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 14,
     },
-    title: {
+    avatar: {
+      width: 56,
+      height: 56,
+      borderRadius: 18,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: colors.primary,
+    },
+    accountName: {
       color: colors.text,
-      fontSize: 28,
+      fontSize: 20,
       fontWeight: '900',
       fontFamily: fontFamily.bold,
     },
-    subtitle: {
+    accountSub: {
       color: colors.textMuted,
-      marginTop: 8,
-      lineHeight: 21,
+      marginTop: 4,
+      fontSize: 14,
       fontFamily: fontFamily.regular,
     },
-    previewLabel: {
-      color: colors.primary,
-      marginTop: 12,
-      fontWeight: '800',
-      fontFamily: fontFamily.bold,
-    },
-    card: {
+    groupCard: {
       backgroundColor: colors.card,
-      borderRadius: 22,
+      borderRadius: 26,
+      borderWidth: 1,
+      borderColor: colors.border,
+      overflow: 'hidden',
+    },
+    detailCard: {
+      backgroundColor: colors.card,
+      borderRadius: 24,
       padding: 16,
       borderWidth: 1,
       borderColor: colors.border,
     },
-    cardTitle: {
+    detailTitle: {
       color: colors.text,
-      fontSize: 17,
+      fontSize: 18,
       fontWeight: '900',
       marginBottom: 12,
       fontFamily: fontFamily.bold,
     },
-    topTabWrap: {
-      flexDirection: 'row',
-      gap: 10,
+    separator: {
+      height: 1,
+      backgroundColor: colors.border,
+      opacity: 0.6,
+      marginLeft: 62,
     },
-    topTab: {
-      flex: 1,
-      paddingVertical: 13,
-      borderRadius: 16,
-      borderWidth: 1,
-      borderColor: colors.border,
-      backgroundColor: colors.cardSecondary,
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
-    topTabActive: {
-      backgroundColor: colors.primary,
-      borderColor: colors.primary,
-    },
-    topTabText: {
-      color: colors.text,
-      fontWeight: '900',
-      fontFamily: fontFamily.bold,
-    },
-    topTabTextActive: {
-      color: colors.primaryText,
+    separatorInner: {
+      height: 1,
+      backgroundColor: colors.border,
+      opacity: 0.65,
+      marginLeft: 14,
     },
     rowWrap: {
       flexDirection: 'row',
@@ -760,16 +961,26 @@ function makeStyles(
       borderWidth: 1,
       borderColor: colors.border,
     },
-    separator: {
-      height: 1,
-      backgroundColor: colors.border,
-      opacity: 0.7,
-      marginLeft: 14,
-    },
     infoText: {
       color: colors.textMuted,
       marginBottom: 8,
       fontFamily: fontFamily.regular,
+      lineHeight: 20,
+    },
+    logoutButton: {
+      minHeight: 54,
+      borderRadius: 16,
+      backgroundColor: colors.danger,
+      alignItems: 'center',
+      justifyContent: 'center',
+      flexDirection: 'row',
+      gap: 8,
+    },
+    logoutText: {
+      color: '#FFFFFF',
+      fontSize: 16,
+      fontWeight: '900',
+      fontFamily: fontFamily.bold,
     },
   });
 }

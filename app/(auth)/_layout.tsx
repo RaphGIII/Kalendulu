@@ -1,9 +1,9 @@
 import React from 'react';
-import { Redirect } from 'expo-router';
+import { Redirect, Stack } from 'expo-router';
 
 import { useAuth } from '@/src/auth/AuthProvider';
 
-export default function IndexScreen() {
+export default function AuthLayout() {
   const { authReady, session } = useAuth();
 
   if (!authReady) {
@@ -14,5 +14,5 @@ export default function IndexScreen() {
     return <Redirect href="/kalender" />;
   }
 
-  return <Redirect href="/login" />;
+  return <Stack screenOptions={{ headerShown: false }} />;
 }
